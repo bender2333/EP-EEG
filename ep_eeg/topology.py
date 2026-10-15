@@ -11,6 +11,19 @@ import numpy as np
 from eval.t_only_bnci import CHANNEL_NAMES
 from .sandbox import SandboxConfig, train_sandbox
 
+def _jsonable(o):
+    if isinstance(o, dict):
+        return {str(k): _jsonable(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_jsonable(v) for v in o]
+    if isinstance(o, (np.bool_, np.integer)):
+        return int(o) if isinstance(o, np.integer) else bool(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.ndarray):
+        return _jsonable(o.tolist())
+    return o
+
 LEADS = CHANNEL_NAMES[:22]
 # class indices: 0 left_hand, 1 right_hand, 2 feet, 3 tongue
 PREDICTIONS = [
@@ -77,7 +90,7 @@ def run_subject(train, val, seed, opts, predictions=PREDICTIONS):
     for name, lead, kind, cls, expected in predictions:
         s = sensitivity(sb, X, y, lead, kind, cls)
         s["expected_sign"] = expected
-        s["holds"] = (np.sign(s["mean"]) == expected) if np.isfinite(s["mean"]) else False
+        s["holds"] = bool(np.sign(s["mean"]) == expected) if np.isfinite(s["mean"]) else False
         out[name] = s
     # untrained control: fresh sandbox, no fit
     ctrl = SandboxConfig(**{**opts})
@@ -92,10 +105,18 @@ def run_subject(train, val, seed, opts, predictions=PREDICTIONS):
             "cert_init": stats.get("cert_init"), "params": sb.n_params}
 
 
+def _one_topology(sub, seed, opts):
+    from .data import load_subject
+    d = load_subject(sub)
+    r = run_subject(d["train"], d["val"], seed, opts)
+    r.update(subject=sub, seed=seed)
+    return r
+
+
 def main_cli():
     import argparse
     from concurrent.futures import ProcessPoolExecutor
-    from .data import load_subject, ROOT
+    from .data import ROOT
     ap = argparse.ArgumentParser()
     ap.add_argument("--opts", default='{"leak":1.0,"rowmass_project":0.9,"eta":0.5,"temperature":0.01}')
     ap.add_argument("--seeds", default="0,1,2")
@@ -107,15 +128,9 @@ def main_cli():
     opts = json.loads(a.opts); opts["group"] = a.group; opts.setdefault("track", "track2")
     seeds = [int(x) for x in a.seeds.split(",")]; subs = [int(x) for x in a.subjects.split(",")]
 
-    def one(sub, seed):
-        d = load_subject(sub)
-        r = run_subject(d["train"], d["val"], seed, opts)
-        r.update(subject=sub, seed=seed)
-        return r
-
     t0 = time.time()
     with ProcessPoolExecutor(a.jobs) as ex:
-        res = [f.result() for f in [ex.submit(one, s, k) for s in subs for k in seeds]]
+        res = [f.result() for f in [ex.submit(_one_topology, s, k, opts) for s in subs for k in seeds]]
     # aggregate: for each prediction, fraction of subject-seed where holds, mean sensitivity
     agg = {}
     for name, *_ in PREDICTIONS:
@@ -148,9 +163,9 @@ def main_cli():
     out = {"opts": opts, "seeds": seeds, "subjects": subs, "agg": agg, "runs": res, "wall_s": time.time() - t0}
     dest = ROOT / "receipts" / "M3" / a.tag
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "summary.json").write_text(json.dumps({k: v for k, v in out.items() if k != "runs"}, indent=1))
-    (dest / "runs.json").write_text(json.dumps(out["runs"]))
-    print(json.dumps(out["agg"], indent=1, ensure_ascii=False))
+    (dest / "summary.json").write_text(json.dumps(_jsonable({k: v for k, v in out.items() if k != "runs"}), indent=1))
+    (dest / "runs.json").write_text(json.dumps(_jsonable(out["runs"])))
+    print(json.dumps(_jsonable(out["agg"]), indent=1, ensure_ascii=False))
     print("wrote", dest)
 
 

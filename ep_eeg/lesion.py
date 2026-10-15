@@ -13,6 +13,19 @@ from eval.preprocess import channel_of_feature
 from .sandbox import train_sandbox
 from . import baselines as B
 
+def _jsonable(o):
+    if isinstance(o, dict):
+        return {str(k): _jsonable(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_jsonable(v) for v in o]
+    if isinstance(o, (np.bool_, np.integer)):
+        return int(o) if isinstance(o, np.integer) else bool(o)
+    if isinstance(o, np.floating):
+        return float(o)
+    if isinstance(o, np.ndarray):
+        return _jsonable(o.tolist())
+    return o
+
 LEADS = CHANNEL_NAMES[:22]
 # preregistered lesion sets (same for every group)
 LESION_SETS = {
@@ -108,9 +121,9 @@ def main_cli():
     out = {"arm": a.arm, "opts": opts, "curve": curve, "wall_s": time.time() - t0}
     dest = ROOT / "receipts" / "M4" / f"{a.arm}_{a.tag}"
     dest.mkdir(parents=True, exist_ok=True)
-    (dest / "summary.json").write_text(json.dumps(out, indent=1))
-    (dest / "runs.json").write_text(json.dumps(res))
-    print(json.dumps(curve, indent=1))
+    (dest / "summary.json").write_text(json.dumps(_jsonable(out), indent=1))
+    (dest / "runs.json").write_text(json.dumps(_jsonable(res)))
+    print(json.dumps(_jsonable(curve), indent=1))
     print("wrote", dest)
 
 
