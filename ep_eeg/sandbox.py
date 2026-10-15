@@ -40,7 +40,7 @@ class SandboxConfig:
     epochs: int = 10
     batch: int = 32
     shuffle_labels: bool = False
-    rowmass_project: float = 0.0  # >0: after each epoch, globally rescale so row_mass <= this * (1/L)
+    rowmass_project: float = 0.0  # >0: after every accepted update, symmetric per-neuron projection to row_mass <= this/L
     beta: float = 0.04
     eta: float = 0.1
     eta_bias: float = 0.01
@@ -53,6 +53,7 @@ class SandboxConfig:
     normalize: float = 0.0
     scale_cap: float = 3.0
     damping: int = 3
+    leak: float = 0.1          # learning_neuron_model leak (0.1 default; 1.0 = symmetric tanh(v/2))
 
 
 def lead_xy():
@@ -126,7 +127,7 @@ class Sandbox:
         eff = np.array([syn[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
         self.kind = np.array([kind[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
         bias = np.zeros(n); bias[:d] = cfg.input_bias
-        self.brain = cd.NeuralGraph(self.conn, learning_neuron_model(), efficacy=eff, bias=bias)
+        self.brain = cd.NeuralGraph(self.conn, learning_neuron_model(leak=cfg.leak), efficacy=eff, bias=bias)
         self.outputs = list(range(out0, n))
         lc = LearnerConfig(beta=cfg.beta, eta=cfg.eta, eta_bias=cfg.eta_bias, centered=True,
                            free_steps=cfg.free_steps, nudged_steps=cfg.nudged_steps, tolerance=cfg.tolerance,
@@ -155,12 +156,23 @@ class Sandbox:
         return {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
 
     def project_rowmass(self):
-        c = certificate(self.learner.brain); lim = self.cfg.rowmass_project * c.mass_limit
-        if c.row_mass > lim:
-            s = lim / c.row_mass
-            self.learner.brain.efficacy = np.asarray(self.learner.brain.efficacy) * s
-            return s
-        return 1.0
+        """Symmetric per-neuron projection: any neuron whose incoming |W| sum exceeds
+        rowmass_project/L has all its incident synapses (both directions of each
+        reciprocal pair, plus one-way inputs) scaled down. Keeps W symmetric."""
+        br = self.learner.brain; lim = self.cfg.rowmass_project / 0.5
+        eff = np.asarray(br.efficacy).copy(); post, pre = self.conn.post, self.conn.pre
+        gscale = np.asarray(br.weights) / np.where(eff == 0, 1, eff)  # effective/efficacy factor
+        smin = 1.0
+        for _ in range(20):
+            inc = np.bincount(post, weights=np.abs(eff * gscale), minlength=self.n)
+            over = inc > lim * (1 - 1e-9)
+            if not over.any(): break
+            f = np.ones(self.n); f[over] = lim / inc[over] * (1 - 1e-6)
+            fac = np.minimum(f[post], np.where(self.kind == "in", 1.0, f[pre]))
+            eff = eff * fac; smin = min(smin, float(fac.min()))
+        if smin < 1.0:
+            br.efficacy = eff
+        return smin
 
     def fit(self, X, y, log):
         cfg = self.cfg
@@ -181,10 +193,11 @@ class Sandbox:
                         warnings.simplefilter("ignore")
                         _, rep = self.learner.step(D[b], ys[b])
                     stats["accepted_rows"] += len(b); stats["row_sweeps"] += rep["total_row_sweeps"]
+                    if cfg.rowmass_project > 0: stats["min_projection"] = min(stats.get("min_projection", 1.0), self.project_rowmass())
                 except LearningPhaseError as e:
                     stats["refused_batches"] += 1
                     stats["refusal_phases"][e.phase] = stats["refusal_phases"].get(e.phase, 0) + 1
-            s = self.project_rowmass() if cfg.rowmass_project > 0 else 1.0
+            s = stats.get("min_projection", 1.0)
             c = self.cert(); c.update(epoch=ep, wall=time.time() - t, projection=s)
             stats["epochs"].append(c)
             log(f"epoch {ep} cert={c['certified']} row_mass={c['row_mass']:.3f} refused={stats['refused_batches']}/{stats['attempted_batches']}")
