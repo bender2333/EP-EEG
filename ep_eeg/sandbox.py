@@ -54,6 +54,7 @@ class SandboxConfig:
     scale_cap: float = 3.0
     damping: int = 3
     leak: float = 0.1          # learning_neuron_model leak (0.1 default; 1.0 = symmetric tanh(v/2))
+    slots: int = 1             # Learner slots (M5 outlet extension; 1 = single action slot)
 
 
 def lead_xy():
@@ -142,7 +143,8 @@ class Sandbox:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.learner = Learner(self.brain, self.outputs, config=lc,
-                                   plastic_synapses=plastic_syn, plastic_neurons=plastic_n)
+                                   plastic_synapses=plastic_syn, plastic_neurons=plastic_n,
+                                   slots=cfg.slots)
         n_in = int((plastic_syn & (self.kind == "in")).sum())
         n_rec = int((plastic_syn & (self.kind != "in")).sum()) // 2
         self.n_params = n_in + n_rec + int(plastic_n.sum())
@@ -246,6 +248,7 @@ PRESETS = {
     "ep_shuffled": {"track": "track2", "shuffle_labels": True},
     "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
+    "ep_slots4": {"slots": 4},
 }
 
 
