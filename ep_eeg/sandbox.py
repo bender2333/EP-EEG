@@ -100,8 +100,13 @@ class Sandbox:
     def __init__(self, cfg: SandboxConfig, seed: int):
         self.cfg = cfg; rng = np.random.default_rng(seed)
         d = 44 if cfg.track == "track1" else 66
-        k = cfg.k; nc = 22 * k; n = d + nc + 4
-        self.d, self.nc, self.n = d, nc, n
+        k = cfg.k; nc = 22 * k
+        self.n_classes = 4
+        # slots>1: parallel 4-way readouts (cadence equal slots); total outlets = 4 * slots
+        self.n_slots = int(cfg.slots)
+        n_out = self.n_classes * self.n_slots
+        n = d + nc + n_out
+        self.d, self.nc, self.n, self.n_out = d, nc, n, n_out
         lead_of_feat = np.tile(np.arange(22), d // 22)
         col0, out0 = d, d + nc
         self.col0, self.out0 = col0, out0
@@ -116,7 +121,7 @@ class Sandbox:
             syn[(col0 + a, col0 + b)] = syn[(col0 + b, col0 + a)] = w
             kind[(col0 + a, col0 + b)] = kind[(col0 + b, col0 + a)] = "col"
         for a in range(nc):
-            for o in range(4):
+            for o in range(n_out):
                 w = rng.normal(0, cfg.sigma_out)
                 syn[(col0 + a, out0 + o)] = syn[(out0 + o, col0 + a)] = w
                 kind[(col0 + a, out0 + o)] = kind[(out0 + o, col0 + a)] = "out"
@@ -180,6 +185,9 @@ class Sandbox:
         cfg = self.cfg
         if cfg.shuffle_labels: y = self.rng.permutation(y)
         Xs = X.reshape(-1, X.shape[-1]); ys = np.repeat(y, X.shape[1])
+        if self.n_slots > 1:
+            # each slot is a 4-way classifier; same class label in every slot
+            ys = np.column_stack([ys] * self.n_slots)
         D = self.drive(Xs)
         stats = {"attempted_batches": 0, "refused_batches": 0, "attempted_rows": 0, "accepted_rows": 0,
                  "row_sweeps": 0.0, "epochs": [], "refusal_phases": {}}
@@ -218,7 +226,10 @@ class Sandbox:
         eq = self.free_states(X)
         act = np.asarray(eq.state.activation)[:, self.outputs]
         ok = np.asarray(eq.converged) & np.all(np.isfinite(act), 1)
-        return act.reshape(n, k, 4), ok.reshape(n, k)
+        if self.n_slots > 1:
+            # (rows, slots, classes) -> mean over slots
+            act = act.reshape(-1, self.n_slots, self.n_classes).mean(1)
+        return act.reshape(n, k, self.n_classes), ok.reshape(n, k)
 
 
 def train_sandbox(train, seed, **opts):
