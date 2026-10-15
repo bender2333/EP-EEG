@@ -1,0 +1,2 @@
+candidate_id	stage	arm	kappa_E	kappa_E_seed_sd	acc_E	settle_rate_E	rejected_trials_E	kappa_val	status
+M0__lda_track2__db12387__bf21a9e8	M0	lda_track2	0.4156	0.0000	0.5617	1.0000	0	0.3889	fresh

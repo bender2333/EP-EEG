@@ -54,3 +54,14 @@ def eegnet(train, val, seed, epochs=300, lr=1e-3, batch=32):
     with torch.no_grad():
         p = torch.softmax(m(torch.tensor(val["seg"], dtype=torch.float32)), 1).numpy()[:, None, :]
     return p, np.ones(p.shape[:2], bool), {"params": int(sum(q.numel() for q in m.parameters()))}
+
+
+def mlp(train, val, seed, hidden=64, track="track2", alpha=1e-3, max_iter=200):
+    """Same Track-2 input, parameter count near the EP sandbox (~4.5k)."""
+    from sklearn.neural_network import MLPClassifier
+    X = train[track + "_x"]; y = train["y"]; n, k, d = X.shape
+    clf = MLPClassifier(hidden_layer_sizes=(hidden,), alpha=alpha, max_iter=max_iter, random_state=seed,
+                        early_stopping=False).fit(X.reshape(-1, d), np.repeat(y, k))
+    Xv = val[track + "_x"]
+    p = clf.predict_proba(Xv.reshape(-1, d)).reshape(len(Xv), k, 4)
+    return p, np.ones(p.shape[:2], bool), {"params": int(sum(c.size for c in clf.coefs_) + sum(b.size for b in clf.intercepts_))}

@@ -7,6 +7,7 @@ ARMS = {
     "shuffled_labels": partial(B.lda, track="track2", shuffle=True),
     "fbcsp": B.fbcsp,
     "eegnet": B.eegnet,
+    "mlp_track2": B.mlp,
 }
 
 

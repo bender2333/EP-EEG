@@ -115,19 +115,22 @@
 
 ## 环境
 
-- 运行平台：Windows + PowerShell。
-- Python：系统自带 3.14，超出 cadence 已测试的版本范围（3.11–3.13），所以用 uv 建一个 3.12 的虚拟环境。已实测 Python 3.12.13。
-- 已安装并导入验证：cadence-net 0.83.0（editable，commit `6499e56`）、MOABB 1.7.2、Braindecode 1.8.1、scikit-learn 1.9.1。
-- 安装命令：
-  ```powershell
+- 运行平台：Linux（本机实测：8 CPU、约 15 GB RAM、无 NVIDIA GPU）。Windows 不是必需。
+- Python：用 uv 建 3.12 虚拟环境。已实测 Python 3.12.15。
+- 已安装并导入验证：cadence-net 0.83.0（editable，commit `6499e56`，路径 `/workspace/cadence`）、MOABB 1.7.2、Braindecode 1.8.1、scikit-learn 1.9.1、torch 2.14.1（CPU）、numba 0.68.0、mne 1.13.2。
+- 安装命令（实测）：
+  ```bash
+  git clone https://github.com/bender2333/cadence.git /workspace/cadence
+  (cd /workspace/cadence && git checkout 6499e56)
   uv venv --python 3.12 .venv
-  uv pip install --python .venv\Scripts\python.exe -e "C:\project\cadence[fast]" moabb braindecode scikit-learn
+  uv pip install --python .venv/bin/python -e "/workspace/cadence[fast]" moabb==1.7.2 braindecode==1.8.1 scikit-learn==1.9.1
+  export MNE_DATA=/workspace/mne_data
   ```
-- MOABB 1.7.2 的 `BNCI2014_001.get_data(sessions=...)` 会在过滤前加载该被试的 T 和 E。禁止用它执行研究循环；M0 先实现只加载 T 的数据适配层。
-- 硬件：本机没有 NVIDIA GPU。cadence 用 CPU 后端加 `[fast]`（numba）；据 cadence `docs/backends.md`，小规模网络在 CPU + Numba 上比 CUDA 更快。
-- 初始命令如下，M0 验证后改为实测过的命令：
-  ```powershell
-  uv venv --python 3.12 .venv
-  uv pip install --python .venv\Scripts\python.exe -e "C:\project\cadence[fast]" moabb braindecode scikit-learn
-  ```
-- 本节由 agent 维护，记录实测命令、预算档位和单被试耗时；对照表在重新核实 cadence 后也可以由 agent 更新。其余各节由人维护。
+- MOABB 1.7.2 的 `BNCI2014_001.get_data(sessions=...)` 会在过滤前加载该被试的 T 和 E。禁止用它执行研究循环；只用 `eval/t_only_bnci.load_t_session`（研究循环）和 `eval/holdout.load_e_session`（阶段门，需 `EPEEG_GATE=1`）。
+- 硬件：无 GPU。cadence 用 CPU 后端加 `[fast]`（numba）。建议 `NUMBA_NUM_THREADS=2 OMP_NUM_THREADS=2`，runner 默认 `--jobs 4`。
+- 预算档位（M0/M1 实测，CPU）：
+  - **快速档**：9 被试 × 1 种子。同输入 LDA ≈ 5 s；FBCSP ≈ 80 s；EEGNet(300 epoch) ≈ 28 min；EP 沙盘(10 epoch) ≈ 35–45 s。
+  - **完整档**：9 被试 × 3 种子。同输入 LDA ≈ 5 s；FBCSP ≈ 80 s；EEGNet ≈ 28 min；EP 沙盘 ≈ 2–3 min。
+  - 超出档位上限 2 倍记 crash。EP 完整档超时上限设为 3600 s。
+- A01T.mat SHA-256：`054f02e70cf9c4ada1517e9b9864f45407939c1062c6793516585c6f511d0325`。
+- 本节由 agent 维护。

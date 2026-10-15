@@ -1,0 +1,39 @@
+{
+ "commit": "1b90858",
+ "stage": "M1",
+ "arm": "ep_track2",
+ "opts": {
+  "eta": 2.0
+ },
+ "subjects": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.0,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.25,
+ "settle_rate": 0.0,
+ "per_subject_kappa": [
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0,
+  0.0
+ ],
+ "wall_s": 18.911202669143677,
+ "python": "3.12.15"
+}
