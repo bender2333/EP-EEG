@@ -1,0 +1,243 @@
+"""EP sandbox adapter (ADR-0001..0003): Connectome.from_synapses + NeuralGraph + Learner.
+
+Neurons: [inputs (d) | columns (22*k) | outlet (4)].
+Inputs project one-way to the columns of their own lead; columns are reciprocal
+(group-specific edge set / init); columns <-> outlet reciprocal.
+"""
+from __future__ import annotations
+import time, warnings
+from dataclasses import dataclass, asdict
+import numpy as np
+import cadence as cd
+from cadence.learning import Learner, LearnerConfig, learning_neuron_model, LearningPhaseError
+from cadence.certificate import certificate
+from eval.t_only_bnci import CHANNEL_NAMES
+
+LEADS = CHANNEL_NAMES[:22]
+# ADR-0007 (proposed): five-region map for group 3
+REGIONS = {
+    "frontal": ["Fz", "FC3", "FC1", "FCz", "FC2", "FC4"],
+    "left": ["C5", "C3", "C1", "CP3", "CP1"],
+    "mid": ["Cz", "CPz"],
+    "right": ["C2", "C4", "C6", "CP2", "CP4"],
+    "parietal": ["P1", "Pz", "P2", "POz"],
+}
+REGION_LINKS = {("frontal", "left"), ("frontal", "mid"), ("frontal", "right"),
+                ("left", "mid"), ("right", "mid"),
+                ("parietal", "left"), ("parietal", "mid"), ("parietal", "right")}
+
+
+@dataclass
+class SandboxConfig:
+    track: str = "track2"
+    group: str = "g1"          # g1 uniform, g2 distance-init, g3 five-region, sparse (g3-degree matched random)
+    k: int = 4
+    sigma_in: float = 0.1
+    sigma_col: float = 0.01
+    sigma_out: float = 0.01
+    input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
+    train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
+    epochs: int = 10
+    batch: int = 32
+    shuffle_labels: bool = False
+    rowmass_project: float = 0.0  # >0: after each epoch, globally rescale so row_mass <= this * (1/L)
+    beta: float = 0.04
+    eta: float = 0.1
+    eta_bias: float = 0.01
+    free_steps: int = 1024
+    nudged_steps: int = 1024
+    tolerance: float = 3e-3
+    temperature: float = 0.2
+    decay: float = 0.0
+    momentum: float = 0.0
+    normalize: float = 0.0
+    scale_cap: float = 3.0
+    damping: int = 3
+
+
+def lead_xy():
+    import mne
+    pos = mne.channels.make_standard_montage("standard_1005").get_positions()["ch_pos"]
+    return np.array([pos[c] for c in LEADS])
+
+
+def degree_matched_shuffle(edges, n, rng, swaps_per_edge=10):
+    E = [tuple(e) for e in edges]; S = set(E)
+    for _ in range(swaps_per_edge * len(E)):
+        i, j = rng.integers(len(E), size=2)
+        (a, b), (c, d) = E[i], E[j]
+        if rng.random() < 0.5: c, d = d, c
+        n1, n2 = tuple(sorted((a, d))), tuple(sorted((c, b)))
+        if a == d or c == b or n1 in S or n2 in S or n1 == n2: continue
+        S -= {E[i], E[j]}; S |= {n1, n2}; E[i], E[j] = n1, n2
+    return E
+
+
+def col_edges(cfg, rng):
+    """Unordered column pairs (a<b) and an init multiplier per pair."""
+    k = cfg.k; nc = 22 * k; lead = np.repeat(np.arange(22), k)
+    pairs = [(a, b) for a in range(nc) for b in range(a + 1, nc)]
+    mult = np.ones(len(pairs))
+    if cfg.group in ("g3", "sparse"):
+        reg = {c: r for r, cs in REGIONS.items() for c in cs}
+        def allowed(a, b):
+            ra, rb = reg[LEADS[lead[a]]], reg[LEADS[lead[b]]]
+            return ra == rb or (ra, rb) in REGION_LINKS or (rb, ra) in REGION_LINKS
+        g3 = [p for p in pairs if allowed(*p)]
+        pairs = g3 if cfg.group == "g3" else degree_matched_shuffle(g3, nc, rng)
+        mult = np.ones(len(pairs))
+    elif cfg.group == "g2":
+        xy = lead_xy(); dist = np.linalg.norm(xy[:, None] - xy[None], axis=-1)
+        lam = np.median(dist[np.triu_indices(22, 1)])
+        mult = np.array([np.exp(-dist[lead[a], lead[b]] ** 2 / (2 * lam ** 2)) for a, b in pairs])
+        mult = mult / np.mean(np.abs(mult))  # same mean init magnitude as g1
+    return pairs, mult
+
+
+class Sandbox:
+    def __init__(self, cfg: SandboxConfig, seed: int):
+        self.cfg = cfg; rng = np.random.default_rng(seed)
+        d = 44 if cfg.track == "track1" else 66
+        k = cfg.k; nc = 22 * k; n = d + nc + 4
+        self.d, self.nc, self.n = d, nc, n
+        lead_of_feat = np.tile(np.arange(22), d // 22)
+        col0, out0 = d, d + nc
+        self.col0, self.out0 = col0, out0
+        syn = {}; kind = {}
+        for f in range(d):
+            for j in range(k):
+                q = col0 + lead_of_feat[f] * k + j
+                syn[(f, q)] = rng.normal(0, cfg.sigma_in); kind[(f, q)] = "in"
+        pairs, mult = col_edges(cfg, rng)
+        for (a, b), m in zip(pairs, mult):
+            w = rng.normal(0, cfg.sigma_col) * m
+            syn[(col0 + a, col0 + b)] = syn[(col0 + b, col0 + a)] = w
+            kind[(col0 + a, col0 + b)] = kind[(col0 + b, col0 + a)] = "col"
+        for a in range(nc):
+            for o in range(4):
+                w = rng.normal(0, cfg.sigma_out)
+                syn[(col0 + a, out0 + o)] = syn[(out0 + o, col0 + a)] = w
+                kind[(col0 + a, out0 + o)] = kind[(out0 + o, col0 + a)] = "out"
+        keys = list(syn)
+        pre = np.array([p for p, _ in keys]); post = np.array([q for _, q in keys])
+        self.conn = cd.Connectome.from_synapses(
+            n, pre=pre, post=post,
+            populations={"inp": tuple(range(d)), "col": tuple(range(col0, out0)), "out": tuple(range(out0, n))})
+        eff = np.array([syn[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
+        self.kind = np.array([kind[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
+        bias = np.zeros(n); bias[:d] = cfg.input_bias
+        self.brain = cd.NeuralGraph(self.conn, learning_neuron_model(), efficacy=eff, bias=bias)
+        self.outputs = list(range(out0, n))
+        lc = LearnerConfig(beta=cfg.beta, eta=cfg.eta, eta_bias=cfg.eta_bias, centered=True,
+                           free_steps=cfg.free_steps, nudged_steps=cfg.nudged_steps, tolerance=cfg.tolerance,
+                           nudge="cross_entropy", temperature=cfg.temperature, normalize=cfg.normalize,
+                           normalize_floor=1e-3, momentum=cfg.momentum, decay=cfg.decay,
+                           scale_cap=cfg.scale_cap, qualified=True, damping=cfg.damping, surprise=False)
+        plastic_syn = np.ones(len(eff), bool)
+        plastic_n = np.zeros(n, bool); plastic_n[col0:] = True
+        if not cfg.train_internal:
+            plastic_syn = self.kind == "out"
+            plastic_n[col0:out0] = False
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.learner = Learner(self.brain, self.outputs, config=lc,
+                                   plastic_synapses=plastic_syn, plastic_neurons=plastic_n)
+        n_in = int((plastic_syn & (self.kind == "in")).sum())
+        n_rec = int((plastic_syn & (self.kind != "in")).sum()) // 2
+        self.n_params = n_in + n_rec + int(plastic_n.sum())
+        self.rng = rng
+
+    def drive(self, X):
+        D = np.zeros((len(X), self.n)); D[:, :self.d] = X; return D
+
+    def cert(self):
+        c = certificate(self.learner.brain)
+        return {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
+
+    def project_rowmass(self):
+        c = certificate(self.learner.brain); lim = self.cfg.rowmass_project * c.mass_limit
+        if c.row_mass > lim:
+            s = lim / c.row_mass
+            self.learner.brain.efficacy = np.asarray(self.learner.brain.efficacy) * s
+            return s
+        return 1.0
+
+    def fit(self, X, y, log):
+        cfg = self.cfg
+        if cfg.shuffle_labels: y = self.rng.permutation(y)
+        Xs = X.reshape(-1, X.shape[-1]); ys = np.repeat(y, X.shape[1])
+        D = self.drive(Xs)
+        stats = {"attempted_batches": 0, "refused_batches": 0, "attempted_rows": 0, "accepted_rows": 0,
+                 "row_sweeps": 0.0, "epochs": [], "refusal_phases": {}}
+        c0 = self.cert(); stats["cert_init"] = c0
+        if not c0["certified"]:
+            stats["failed"] = "certificate_init"; return stats
+        for ep in range(cfg.epochs):
+            t = time.time(); idx = self.rng.permutation(len(D))
+            for b in np.array_split(idx, max(1, len(idx) // cfg.batch)):
+                stats["attempted_batches"] += 1; stats["attempted_rows"] += len(b)
+                try:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore")
+                        _, rep = self.learner.step(D[b], ys[b])
+                    stats["accepted_rows"] += len(b); stats["row_sweeps"] += rep["total_row_sweeps"]
+                except LearningPhaseError as e:
+                    stats["refused_batches"] += 1
+                    stats["refusal_phases"][e.phase] = stats["refusal_phases"].get(e.phase, 0) + 1
+            s = self.project_rowmass() if cfg.rowmass_project > 0 else 1.0
+            c = self.cert(); c.update(epoch=ep, wall=time.time() - t, projection=s)
+            stats["epochs"].append(c)
+            log(f"epoch {ep} cert={c['certified']} row_mass={c['row_mass']:.3f} refused={stats['refused_batches']}/{stats['attempted_batches']}")
+            if not c["certified"]:
+                stats["failed"] = f"certificate_epoch_{ep}"; break
+        return stats
+
+    def free_states(self, X):
+        n, k, d = X.shape
+        eq = self.learner.brain.equilibrate(self.drive(X.reshape(-1, d)), budget=self.cfg.free_steps,
+                                            tolerance=self.cfg.tolerance, damping=self.cfg.damping)
+        return eq
+
+    def predict(self, X):
+        n, k, d = X.shape
+        eq = self.free_states(X)
+        act = np.asarray(eq.state.activation)[:, self.outputs]
+        ok = np.asarray(eq.converged) & np.all(np.isfinite(act), 1)
+        return act.reshape(n, k, 4), ok.reshape(n, k)
+
+
+def train_sandbox(train, seed, **opts):
+    cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed); logs = []
+    stats = sb.fit(train[cfg.track + "_x"], train["y"], logs.append)
+    return sb, stats, logs
+
+
+def run_arm(train, val, seed, **opts):
+    t = time.time()
+    sb, stats, logs = train_sandbox(train, seed, **opts)
+    cfg = sb.cfg
+    extra = {"cfg": asdict(cfg), "params": sb.n_params, "train": stats, "log": logs, "train_wall": time.time() - t}
+    n = len(val["y"])
+    if "failed" in stats:  # failed certificate: all sub-windows refused (counted; fallback class)
+        return np.zeros((n, 11, 4)), np.zeros((n, 11), bool), extra
+    act, ok = sb.predict(val[cfg.track + "_x"])
+    _, tr_ok = sb.predict(train[cfg.track + "_x"])
+    extra["train_settle_rate"] = float(tr_ok.mean())
+    extra["learn_accept_rate"] = stats["accepted_rows"] / max(1, stats["attempted_rows"])
+    return act, ok, extra
+
+
+PRESETS = {
+    "ep_track2": {"track": "track2"},
+    "ep_track1": {"track": "track1"},
+    "ep_shuffled": {"track": "track2", "shuffle_labels": True},
+    "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
+    "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
+}
+
+
+def arm(name):
+    base = PRESETS[name]
+    def f(train, val, seed, **opts):
+        return run_arm(train, val, seed, **{**base, **opts})
+    return f
