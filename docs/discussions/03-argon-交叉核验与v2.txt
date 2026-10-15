@@ -1,0 +1,80 @@
+Fable 的这份审计非常硬核，不仅把我们上一轮讨论的数学直觉逐一对齐到了 cadence 的源码契约上，还从算力账本和脑电竞赛协议的角度抓出了几个致命的工程盲区。在完全吸纳 Fable 合理建议的基础上，我结合 cadence 最新仓库状态和你的“零先验端到端”核心诉求，对 Fable 的回复做一次交叉核验与二次排雷——其中 Fable 的 85% 建议应立即采纳为工程铁律，但它的方案里也暗藏了 3 个新的底层代码/数学陷阱（尤其是 nudged_steps=12 与 qualified=True 的冲突、以及 Euclidean Alignment 对空间坐标纯洁性的破坏），必须微调后才能直接跑代码。   一、 Fable 审计中必须 100% 采纳的“神来之笔”用 certificate(brain).certified 证明了“不动点唯一性与历史动量互斥”（雷区 1 终局定论）
+Fable 从压缩映射条件 rate = 1 - dt(1 - L·row_mass) < 1 给出了严格数学证明：只要网络满足全局收敛证书，静态不动点就是唯一的，热启动 $s^*(t-1)$ 与冷启动 $0$ 收敛结果完全相同。同时它精准指出 Afterglow 依然带有人为预设的 decay 参数，因此阶段一果断放弃跨窗状态延续，采用“子窗静态平衡态 + qualified=True”，将序列轨迹留给阶段二的 TemporalPatchNet，这是最干净的工程切割。   算力账本核验（雷区 2 的工程死穴）
+Fable 算了一笔非常务实的账：如果按 250 Hz 逐采样点求解，单 Epoch 需要 21.6 万次 equilibrate（每次最多 1024 步矩阵迭代），纯 NumPy 下单 Epoch 耗时数小时；改为 500 ms 窗长、250 ms 步长的子窗后，每个试次（0.5–3.5 s）只有 11 个子窗，单 Epoch 仅需 3,168 次平衡态求解，单被试几分钟内即可跑完。   补齐了 4 个关键实验设计漏洞（雷区 6~9）EOG 物理消噪（雷区 6）：利用 BCI-IV-2a 自带的 3 导 EOG 做线性回归去眼电，这属于纯物理传感器去伪迹，完全不违背“零脑区先验”原则。标准跨 Session 评估协议（雷区 7）：严格采用 Session T（288 试次）训练、Session E（次日 288 试次）测试，核心指标看 Cohen's Kappa ($\kappa$)。   可证伪的生理学对账预测（雷区 8）：把“事后看热力图”升级为先验可证伪假说——由于运动想象的核心是 $\mu/\beta$ 频带去同步化（ERD，即能量下降），当输入为功率特征时，右手想象必然冲刷出 C3 微柱 → 右手动作槽 的负权重通路，左手想象冲刷出 C4 微柱 → 左手动作槽 的负权重通路；且模型必须击败同等输入下的 Linear LDA 与 shuffled(connectome) 随机拓扑对照组。   版本锁死与防腐层（库风险）：核对最新 GitHub 仓库记录，目前 cadence-net 已经从 Fable 看的 0.72.1 狂飙到了 0.83.0（628 次提交，几天前刚合入 surprise-teaching 等新机制）。钉死版本号并封装一层 Adapter 是防止底层 API 变动弄崩实验的必选项。   二、 对 Fable 方案的二次排雷：3 个会把你带进新坑的细节虽然 Fable 的诊断极准，但它给出的修正案和最小可行代码（MVC）里有 3 处底层冲突，如果直接照抄代码会报错或污染实验结论：1. 代码级 Bug：qualified=True 与 nudged_steps=12 组合会触发 100% 拒学（Refusal）Fable 的配置：在最小可行代码中写了 LearnerConfig(..., qualified=True, free_steps=1024, nudged_steps=12)。为什么会崩：如我们在前序调研中专门强调过的，cadence 默认 nudged_steps=12 是配合 qualified=False（有限步启发式微扰）使用的。一旦开启 qualified=True，cadence 的学习契约强制要求自由相和微扰相都必须收敛到 tolerance=3e-3 才允许更新权重。在包含 88 个双向互通微柱的网络里，施加 $\beta=0.04$ 的逆向推力后，12 个迭代步根本不够水波传回输入端并平息到 $3\times 10^{-3}$ 以下！结果就是每一轮微扰相都判定为未收敛（Refusal），权重永远不更新。   修正指令：只要设 qualified=True，必须同步将 nudged_steps 放宽至 256 或 512（甚至 1024）。   2. 方法论陷阱：跨被试 Euclidean Alignment (EA) 会偷偷混入 $22\times 22$ 空间先验Fable 的建议：在雷区 3 中建议用其余 8 名被试预冲刷，并在跨被试前做 Euclidean Alignment（EA，白化协方差矩阵），称其“不是特征工程”。为什么会破坏你的核心立意：EA 的数学公式是对每个试次的信号 $X \in \mathbb{R}^{22\times T}$ 左乘全导联平均协方差矩阵的逆平方根：$\tilde{X} = \bar{R}^{-1/2} X$。请注意，$\bar{R}^{-1/2}$ 是一个 $22\times 22$ 的稠密空间混合矩阵！一旦左乘了它，第 $c$ 个通道的信号就已经变成了全脑 22 个电极的线性组合。此时你再做“第 $c$ 号浮标一对一垂直注入第 $c$ 号微柱”，C3 微柱接收的早就不是纯粹的 C3 水波，而是混入了 C4 和 Cz 的信号——这会直接摧毁事后脑图谱对账的局部可解释性！修正指令：单被试基准（如先跑 A01）：严禁做跨导联协方差白化（EA），严格只做各导联独立的 Z-score 标准化（用各自导联在 Session T 上的均值和方差归一化），保证 22 个浮标 100% 空间解耦。跨被试预冲刷：只对每个被试的每个导联独立做 Z-score + 分位数尺度对齐（Channel-wise Alignment），绝不左乘跨通道混合矩阵。3. 核心哲学权衡：44 维 $\mu/\beta$ 对数功率 vs. 真正的端到端水波微元Fable 的建议：直接算每个 500 ms 子窗的 $\mu$（8–13 Hz）和 $\beta$（13–30 Hz）两个频带的对数功率（$22\times 2 = 44$ 维）。   工程利弊与折中方案：Fable 提这个方案是为了保住“零空间先验”的同时，用最稳的频域特征快速跑通 Baseline。但人工切好 8–13 Hz 和 13–30 Hz 确实引入了人工频段先验。为了既不牺牲算力（保持 500 ms 子窗），又不违背你的端到端初衷，我们可以在同一个子窗框架下设计可插拔的双轨浮标编码器：   编码器 Track-1（Fable 44 维功率基线）：每导联提取 $[\log P_\mu, \log P_\beta]$。用于第一周工程冒烟测试，确保在 A01 被试上快速打平 Linear LDA，并验证 C3 → 右手 负权重假说。编码器 Track-2（纯时域 66 维 Hjorth 水波微元，零频段切分）：在 4–35 Hz 宽带信号上，对每个 500 ms 子窗直接计算三个纯时域物理积分量（即脑电物理学经典的 Hjorth 时域水波三元组）：水波总能量（Activity）：$E_c = \log(\text{Var}(x_c(t)))$（宽带总起伏方差，无频段假设）；水波平均波速/主频（Mobility）：$M_c = \sqrt{\frac{\text{Var}(dx_c/dt)}{\text{Var}(x_c(t))}}$（一阶导数方差与原信号方差之比，物理意义直接对应水波的均方根角频率 $\bar{\omega}$，无需傅里叶变换！）；水波频谱宽度/复杂度（Complexity）：$C_c = \frac{\text{Mobility}(dx_c/dt)}{\text{Mobility}(x_c(t))}$（刻画水波是单一正弦波还是多频混合波）。这三个量 100% 在时域通过差分与方差算出，既解决了单采样点 $\vert{}x(t)\vert{}$ 过零闪烁和窄带假设问题，又没有切分 $\mu/\beta$ 频带，完美保住了“纯物理水波微元”的理论纯粹性！   三、 修正后的阶段一最小可行代码（MVC v2.0）针对 Fable 给出的代码骨架，我修复了以下 4 个工程细节：将输入层到微柱层的 Projection("in/c", "col/c") 改为 reciprocal=False（单向感觉注入，避免感觉端口占用微柱宝贵的 row_mass 收敛额度）；   修复 nudged_steps=256 以匹配 qualified=True；   补全了 NeuralGraph 所需的全图维度 drive 组装函数（Learner.step 接收的是与全图神经元数 brain.n 等长的驱动矩阵，而非仅输入层维度）；加入了自动二分搜索 scale 以确保 100% 通过 certificate(brain).certified 门禁。Python# 建议环境：锁定版本（如 cadence-net==0.72.1 或当前最新 0.83.0），以下以底层通用接口编写
+import numpy as np
+import cadence as cd
+from cadence.genome import Region, Projection, Genome, develop
+from cadence.learning import LearnerConfig, Learner, learning_neuron_model
+from cadence.certificate import certificate
+
+def build_certified_alluvial_sandbed(
+    n_channels: int = 22,
+    in_dim_per_ch: int = 2,   # Track-1 为 2 (μ/β log-power); Track-2 为 3 (Hjorth 水波三元组)
+    k_microcolumns: int = 4,  # 每电极正下方垂直锚定 4 个皮层微柱 (22 * 4 = 88)
+    n_classes: int = 4,
+    init_mesh_scale: float = 0.25,
+    seed: int = 0,
+):
+    regions = (
+        [Region(f"in/{c}", size=in_dim_per_ch) for c in range(n_channels)]
+        + [Region(f"col/{c}", size=k_microcolumns) for c in range(n_channels)]
+        + [Region("motor", size=n_classes)]
+    )
+
+    # 自动缩放内部连接强度，确保 100% 拿到压缩映射收敛证书 (certificate)
+    scale = init_mesh_scale
+    while scale > 0.01:
+        # 1. 浮标垂直锚定：单向边界注入 (reciprocal=False)，不挤占微柱的 row_mass 预算
+        proj = [
+            Projection(f"in/{c}", f"col/{c}", density=1.0, scale=0.5, reciprocal=False)
+            for c in range(n_channels)
+        ]
+        # 2. 湖底全对称冲积沙盘：22 个微柱簇两两全互通 (reciprocal=True, sign=0.0 允许正负抑制演化)
+        proj += [
+            Projection(f"col/{i}", f"col/{j}", density=1.0, sign=0.0, scale=scale, reciprocal=True)
+            for i in range(n_channels)
+            for j in range(i + 1, n_channels)
+        ]
+        # 3. 意图出水口双向耦合：微扰相逆向水波由此回传至全湖
+        proj += [
+            Projection(f"col/{c}", "motor", density=1.0, sign=0.0, scale=scale, reciprocal=True)
+            for c in range(n_channels)
+        ]
+
+        conn = develop(Genome(regions, proj), seed=seed)
+        brain = cd.NeuralGraph(conn, learning_neuron_model())
+        cert = certificate(brain)
+        if cert.certified:
+            print(f"[Gatekeeper Passed] scale={scale:.3f}, rate={cert.rate:.4f}, mass_limit={cert.mass_limit:.3f}")
+            break
+        scale *= 0.8
+    else:
+        raise RuntimeError("无法在当前参数下获得收敛证书，请检查神经元模型配置。")
+
+    # 关键修正：开启 qualified=True 时，nudged_steps 必须给足预算 (256~512)，切勿设为 12！
+    cfg = LearnerConfig(
+        beta=0.04,
+        eta=0.1,               # 适配脑电高噪特性的稳健步长
+        centered=True,         # 中心化正负双相微扰对比 (Laborieux et al.)
+        qualified=True,        # 严格要求自由相与微扰相均满足残差容限才更新
+        tolerance=3e-3,
+        free_steps=1024,
+        nudged_steps=256,      # 修复 Fable 代码中 nudged_steps=12 导致微扰相无法合格的隐患
+        decay=2e-4,            # 内置突触衰减（自动淤平无效河道）
+        scale_cap=3.0,
+        momentum=0.9,
+    )
+    learner = Learner(brain, outputs=conn.members("motor"), config=cfg, reciprocal=True)
+    return brain, conn, learner
+
+def pack_sensory_drive(conn, X_batch: np.ndarray, n_channels: int = 22, in_dim_per_ch: int = 2) -> np.ndarray:
+    """
+    将形状为 (batch_size, n_channels, in_dim_per_ch) 的浮标特征打包为 NeuralGraph 所需的全图 drive 向量
+    """
+    batch_size = X_batch.shape[0]
+    drive = np.zeros((batch_size, conn.n), dtype=np.float32)
+    for c in range(n_channels):
+        idx = conn.members(f"in/{c}")
+        drive[:, idx] = np.tanh(X_batch[:, c, :] / 3.0)  # 软限幅保护
+    return drive
+四、 终极定稿版（v2.0）阶段一作战清单结合我们与 Fable 的全部共识，第一阶段（在 BCI-IV-2a 的 A01 被试上跑通最小闭环）按以下 5 步推进，没有任何理论死角：步骤执行动作硬性门禁 / 验收标准Step 1：环境与物理清洗锁定 cadence-net 版本；利用开局眼动段做 3 导 EOG 线性回归消噪 $\to$ 4–35 Hz 零相移带通 $\to$ 截取提示后 0.5–3.5 s $\to$ 500 ms 窗长、250 ms 步长切分（每试次 11 个子窗）。Session T 训练集共 $288 \times 11 = 3,168$ 个子窗样本；仅按 Session T 各通道独立做 Z-score（不做跨通道 EA）。Step 2：双轨浮标编码同时生成两组无空间混合输入：① Track-1（44 维）：每导联 $[\log P_\mu, \log P_\beta]$；② Track-2（66 维）：每导联纯时域 Hjorth 水波三元组 $[E_c, M_c, C_c]$。检查特征分布无 NaN 或极端离群值，经 $\tanh(x/3)$ 软压缩后落入 $(-1, 1)$。   Step 3：三组对照基线标定在 Session T $\to$ Session E 协议下先跑通：(a) 44/66 维输入 + Linear LDA；(b) 标准 FBCSP + LDA；   (c) shuffled(connectome) 打乱沙盘对照。记录 A01 被试在 Session E 上的测试集 Accuracy 与 Cohen's Kappa ($\kappa$) 作为基准靶标。   Step 4：沙盘冲刷与证书监控运行上述 MVC v2.0 代码，每个 Epoch 结束后检查 certificate(brain).certified；若训练中 row_mass 超标导致证书失效，动态调大 LearnerConfig.decay 或触发一次行和重归一化。自由相与微扰相收敛合格率（Qualified Rate）$>98\%$，测试集 $\kappa$ 追平或超越 Linear LDA 基线。   Step 5：可证伪河道对账提取 brain.dense() 中 col/i ↔ col/j（$88\times 88$ 聚合成 $22\times 22$）与 col/c → motor（$22\times 4$）权重块。盲测检验：验证右手动作槽对 col/C3 的等效连接权重是否显著为负（对应 ERD 功率下降）、左手动作槽对 col/C4 是否显著为负。你看这套融合了 Fable 严苛工程审计与我们“垂直锚定全互通沙盘”的 v2.0 方案，是不是既把算力和数学收敛证书彻底锁死了，又完美保住了你“零空间先验、让水波自己冲出河道”的核心创见？如果没问题，我们可以直接开始写 Step 1~3 在 A01 被试上的完整实验脚本。

@@ -1,0 +1,68 @@
+总评：顶层范式站得住，五个雷区的诊断基本都对（我对照 cadence 0.72.1 的 API 文档逐条核过），但有三处"修正方案"本身会把你带进新坑，另外还漏了四个比 1~5 更致命的工程雷。下面按"判定 → 核实 → 建议"给。
+
+一、五大雷区逐条审计
+
+雷区 1：不动点抹除时间惯性 —— ✅ 诊断正确，❌ 修正方案 A 有坑
+
+诊断不仅正确，而且在 cadence 里是可证明的：库自带的收敛证书要求 rate = 1 − dt(1 − L·row_mass) < 1，这是压缩映射条件，certified 要求 rate < 1 且无 adaptation——压缩映射意味着不动点唯一，于是"从 s*(t−1) 热启动"在数学上和从 0 启动等价。你想要的"水波动量延续"与"收敛证书"互斥，二选一，没有中间路。 githubusercontent
+
+你提的两条修正：
+
+边界扩容（多尺度包络注入输入）：对，这是正道，且与 EP 梯度定理兼容。
+欠阻尼/有限步追踪（Viscous Tracking）：这条在 cadence 里就是 LearnerConfig(qualified=False) 的有限相模式，文档明说qualified=True 要求自由相和微扰相都满足残差才应用更新，反过来有限相是启发式。一旦走这条路，你训的东西不再是 EP，而是一个"截断松弛的 RNN"，雷区 4 里的 contrast_asymmetry 诊断也就失去意义。不要把它当主路线，最多做消融。 githubusercontent
+另外一个事实纠错：文档里说"无参数 Afterglow 基底"——Afterglow(connectome, decay=0.5, amplitude=1.0, focus=1.0, ...)，它和 Trace、Echo 一样带 decay 常数，并没有去掉你想去掉的人工衰减。而且 Brain.compose 默认开着 Trace 和 SynapticMemory，所以用 Brain.step 跨窗不 reset，时间记忆实际是走 Trace(decay=0.5) 进 prefrontal 区，不是你以为的"电位自然延续"。 githubusercontent
+
+建议：阶段一彻底放弃跨窗状态延续，做"短窗静态分类 + 输入携带时间包络"，用 qualified=True。序列版留给 TemporalPatchNet——它路径形状为 (batch, time, ports)，是整段轨迹联合求解，这才是 EP 意义下正确的时序扩展。 githubusercontent
+
+雷区 2：宽带水波微元 —— ✅ 诊断正确，⚠ 正交能量对只对窄带成立
+
+|x| 翻倍频闪烁和慢波淹没的分析都对。但修正方案里的 $E=\sqrt{x^2+(\Delta x/\omega_0)^2}$ 只有在单一频率 $\omega_0$ 附近才恒定，8–30 Hz 这么宽的带它照样有纹波。宽带通用版是 Hilbert 包络 $|x+iH[x]|$。
+
+更干脆的做法是直接回到 ERD 的物理定义——功率。每导联、每子窗（250–500 ms）算 log-bandpower，μ（8–13）+ β（13–30）两个带，22×2 = 44 维输入。这没有任何空间混合，和"零空间先验"完全兼容，而且你算一下计算量就知道为什么必须这样：288 trial × 3 s × 250 Hz = 21.6 万个时刻，每个最多 1024 次 sweep × N² 的矩阵运算，一个 epoch 在 numpy 后端上是小时级；换成每 trial 6–12 个子窗，一个 epoch 只有 2–3 千次 settlement。
+
+雷区 3：隐层坐标 + 过拟合 —— ✅ 诊断正确，修正方案好，但数量级还不够
+
+“22×k 垂直锚定 + 湖底全互通”是这份文档里最好的一个设计，它同时解决坐标定义、参数量和事后对账三件事。cadence 实现路径有两条：Genome 里建 22 个 Region(name, size=k) 加 Projection（scale 乘的是已 fan-scaled 的幅值，reciprocal 加同权反向突触），或者走 cadence.experimental.PartitionedTemporalPatchNet 的 A/B/C 布尔掩码。 githubusercontent
+
+但算一下：264（注入）+ 88×87/2 = 3828（内部对称）≈ 4.1k 参数 vs 288 trial，比值仍是 14:1。这个量级在 2a 上 FBCSP（约 70 个有效参数）都要靠正则化。两条路：
+
+跨被试预冲刷：先用其余 8 被试 × 2 session ≈ 4600 trial 冲出"通用河道"，再用目标被试 288 trial 微调。跨被试前做 Euclidean Alignment（白化协方差），这是"把各个湖的水位调平"，不是特征工程。
+用库自带的衰减：LearnerConfig.decay 每次更新按该比例收缩所有可塑突触效能和偏置，不用你手写 epoch 末的软阈值。 githubusercontent
+还有一处逻辑自洽问题：组 2 的高斯距离初始化本身就是空间先验，和"零先验"口号冲突——明确标成消融组即可，别混进主结论。
+
+雷区 4：API 混用 + 高扇入 —— ✅ 诊断全部核实无误
+
+三条我逐一对过文档：
+
+symmetry_tolerance=0.15 是 TemporalPatchNet.observe 的参数，β 会被反复减半直到两条 detuned 路径对称落在自由路径两侧，否则拒绝为 contrast_asymmetric；静态图这边是 Brain.last_settlement，字段是 qualified、residual、steps。两者确实不能混写。 githubusercontent
+Connectome.from_synapses 的 min_count 是在构图时丢掉低于该重数的突触，不是在线剪枝。 githubusercontent
+你写的 1024 步 / 3e-3 容差不是随手选的——那正好是 Brain 默认的 LearnerConfig(tolerance=3e-3, free_steps=1024)，可以放心沿用。
+但修正方案里 $\sigma \le 0.15/\sqrt{N}$ 这个常数我建议不要硬编。高斯权重的行绝对和 ≈ 0.8σN = 0.12√N，N=88 时约 1.1。能否收敛取决于它是否小于 certificate(brain).mass_limit，而这个界由神经元模型的 slope/leak 决定。直接用 certificate(brain).certified 做门禁，并且每个 epoch 重查——学习会抬高 row_mass，scale_cap 只限单突触幅值不限行和，证书会在训练中途失效。饱和问题则用 preflight(...)，它会报"readout 在所有 drive 下无斜率"这类警告。
+
+雷区 5：全时段均匀微扰 —— ✅ 正确，但置信度门控是个自激回路
+
+截 cue 后 0.5–3.5 s（即 trial 时间 2.5–5.5 s）+ 子窗滑动，对。但"用自由相预测置信度动态加权 β"要小心：早期网络对错误类别自信时，门控会放大错误更新，这是一个正反馈。先用固定 β、全子窗等权跑通基线；门控作为第二步消融，并且只用trial 级能量门控（整段 μ 带功率是否出现 ERD），不用网络自己的输出置信度。
+
+二、漏掉的四个雷
+
+雷区 6：没用 EOG 通道。 2a 每个被试除 22 导 EEG 还有 3 导 EOG，session 开头有专门的眼动标定段。用它做 EOG 回归是标准的客观物理清洗，比把下限提到 4 Hz 更干净，两者可以叠加。
+
+雷区 7：评估协议没定。 2a 的竞赛协议是 session T 训练、session E 测试，跨 session 非平稳是主要难点。文档只提"单 session 288 trial"，容易做成 session 内交叉验证然后高估。指标用 kappa，不要只报 accuracy。
+
+雷区 8：没有对照组，"涌现河道"不可证伪。 至少三组：(a) 同样 44 维输入 + 线性 LDA；(b) FBCSP；(c) cadence 自带的 shuffled(connectome, seed) 打乱连接体。如果沙盘打不过 (a)，"冲刷出功能河道"的叙事就没有立足点。事后对账也要写成可证伪的预测：右手 MI → C3 柱→右手槽的通路为负（ERD 是功率下降），左手 → C4 为负，脚 → Cz 为负、C3/C4 可能为正（surround ERS）。
+
+雷区 9：阶段二在 2a 上没有标签。 Nudge(groups=...)、Learner(slots=[...])、Bins(dims, size=9) 确实支持分组槽和连续动作（这点你选库选对了），但 2a 没有任何连续运动学标签，Bins 也是 9 档离散群体编码而非真连续。阶段二要换数据集（例如有 grasp-and-lift 事件序列或连续光标轨迹的 EEG/ECoG 数据），这应该提前写进路线图，否则"开放意图流形"只能停在口号。
+
+附带一个库风险：README 明说状态是"重度开发中"，接口和默认值在提交之间快速变动，要钉死一个 commit 或 release。仓库目前 4 star、2 fork，你是在用一个单人维护的研究库做主干，把 cadence-net==0.72.1 钉死并把关键调用封一层适配器。 github
+
+三、建议的阶段一最小可行配置
+
+
+
+python
+
+# cadence-net==0.72.1，钉死版本import numpy as np, cadence as cdfrom cadence.genome import Region, Projection, Genome, developfrom cadence.learning import LearnerConfig, Learner, learning_neuron_modelfrom cadence.certificate import certificateK, C = 4, 22 # 每电极下 4 个皮层微柱regions = ([Region(f"in/{c}", size=2) for c in range(C)] # μ/β log-power + [Region(f"col/{c}", size=K) for c in range(C)] + [Region("motor", size=4)])proj = [Projection(f"in/{c}", f"col/{c}", density=1.0, reciprocal=True) for c in range(C)] # 垂直注入proj += [Projection(f"col/{i}", f"col/{j}", density=1.0, sign=0.0, scale=0.3, reciprocal=True) for i in range(C) for j in range(i+1, C)] # 湖底全互通proj += [Projection(f"col/{c}", "motor", density=1.0, reciprocal=True) for c in range(C)]conn = develop(Genome(regions, proj), seed=0)brain = cd.NeuralGraph(conn, learning_neuron_model())assert certificate(brain).certified # 门禁：不过就调小 scalecfg = LearnerConfig(beta=0.04, eta=0.2, centered=True, qualified=True, tolerance=3e-3, free_steps=1024, nudged_steps=12, decay=1e-4, scale_cap=4.0, momentum=0.9)learner = Learner(brain, outputs=conn.members("motor"), config=cfg, reciprocal=True)# 每 epoch：learner.step(drive, labels)；重查 certificate(brain).certified# 对账：brain.dense() 取 col/i ↔ col/j 与 col/c → motor 子块，按 10-20 坐标画图
+
+输入流水线：EOG 回归 → 4–35 Hz 带通 → cue 后 0.5–3.5 s → 500 ms 子窗步长 250 ms → 每导 log(μ 功率)、log(β 功率) → 按 session T 统计量标准化。Projection 的具体 scale 值以 certificate 过关为准，上面的 0.3 只是起点。
+
+先把这个配置在 A01（2a 里最容易的被试，FBCSP 约 76%）上跑到 ≥ 线性基线，再谈河道。 

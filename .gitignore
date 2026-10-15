@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.codegraph/
+data/
+runs/
+receipts/
+results.tsv
+holdout.tsv
+*.log
+*.egg-info/

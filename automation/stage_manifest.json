@@ -1,0 +1,45 @@
+{
+  "project": "EP-EEG",
+  "protocol_version": 1,
+  "readiness": "bootstrap_only",
+  "cadence": {
+    "path": "C:/project/cadence",
+    "commit": "6499e56"
+  },
+  "environment": {
+    "python": "3.12",
+    "packages": {
+      "cadence-net": "0.83.0",
+      "moabb": "1.7.2",
+      "braindecode": "1.8.1",
+      "scikit-learn": "1.9.1"
+    }
+  },
+  "dataset": {
+    "name": "BNCI2014_001",
+    "train_session": "T",
+    "validation_runs": [4, 5],
+    "training_runs": [0, 1, 2, 3],
+    "holdout_session": "E",
+    "holdout_policy": "stage_gate_only"
+  },
+  "subjects": 9,
+  "seeds": [0, 1, 2],
+  "tracks": ["track1", "track2"],
+  "stages": {
+    "M0": {
+      "purpose": "infrastructure_and_baselines",
+      "arms": ["lda_track1", "lda_track2", "fbcsp", "eegnet", "shuffled_labels"],
+      "holdout_arms": ["lda_track2", "fbcsp", "eegnet"],
+      "requires_holdout": true,
+      "requires_receipts": true
+    },
+    "M1": {
+      "purpose": "cadence_feasibility",
+      "arms": ["ep_track1", "ep_track2", "same_input_lda", "shuffled_labels"],
+      "holdout_arms": ["ep_track2"],
+      "requires_holdout": true,
+      "requires_receipts": true
+    }
+  }
+}
