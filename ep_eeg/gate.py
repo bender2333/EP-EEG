@@ -4,7 +4,7 @@ Models are trained exactly as in the frozen validation candidate (T runs 0-3,
 same seeds, same options); E is scored with the frozen aggregation.
 """
 from __future__ import annotations
-import argparse, json, os, time
+import argparse, hashlib, json, os, time
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from eval.scoring import aggregate, fallback_class, score
@@ -31,7 +31,7 @@ def main():
     ap.add_argument("--jobs", type=int, default=4)
     a = ap.parse_args()
     summ = json.loads(open(a.candidate).read())
-    cid = f'{a.stage}__{summ["arm"]}__{summ["commit"]}__{abs(hash(json.dumps(summ["opts"], sort_keys=True))) % 10**8}'
+    cid = f'{a.stage}__{summ["arm"]}__{summ["commit"]}__{hashlib.sha1(json.dumps(summ["opts"], sort_keys=True).encode()).hexdigest()[:8]}'
     out = ROOT / "holdout_receipts" / f"{cid}.json"
     if out.exists():
         raise SystemExit(f"HOLDOUT_ALREADY_READ: {cid}")
