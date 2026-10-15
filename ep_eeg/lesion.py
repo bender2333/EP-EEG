@@ -67,25 +67,55 @@ def run_lda(train, val, seed, track, lesion_names):
     return p, np.ones(p.shape[:2], bool), {}
 
 
-def one(arm, subject, seed, opts, lesion_key):
+def _ep_opts(arm, opts):
+    o = dict(opts)
+    if arm == "ep_g2": o["group"] = "g2"
+    elif arm == "ep_g3": o["group"] = "g3"
+    elif arm == "ep_sparse": o["group"] = "sparse"
+    elif arm == "ep_fixed": o["train_internal"] = False
+    return o
+
+
+def one_subject_seed(arm, subject, seed, opts):
+    """Train once; evaluate all preregistered lesion sets (same trained model)."""
     from .data import load_subject
     d = load_subject(subject)
-    leads = LESION_SETS[lesion_key]
+    out = []
     if arm.startswith("ep_") or arm in ("ep_g1", "ep_g2", "ep_g3", "ep_sparse", "ep_fixed", "ep_track2"):
-        o = dict(opts)
-        if arm == "ep_g2": o["group"] = "g2"
-        elif arm == "ep_g3": o["group"] = "g3"
-        elif arm == "ep_sparse": o["group"] = "sparse"
-        elif arm == "ep_fixed": o["train_internal"] = False
-        scores, ok, extra = run_ep(d["train"], d["val"], seed, o, leads)
+        o = _ep_opts(arm, opts)
+        sb, stats, _ = train_sandbox(d["train"], seed, **o)
+        if "failed" in stats:
+            n = len(d["val"]["y"])
+            for lk, leads in LESION_SETS.items():
+                m = score(d["val"]["y"], np.zeros(n, int), np.zeros((n, 11), bool))
+                m.update(subject=subject, seed=seed, lesion=lk, leads=leads, failed=stats["failed"])
+                out.append(m)
+            return out
+        track = sb.cfg.track
+        for lk, leads in LESION_SETS.items():
+            Xv = zero_leads(d["val"][track + "_x"], track, leads)
+            scores, ok = sb.predict(Xv)
+            pred, rej = aggregate(scores, ok, fallback_class(d["train"]["y"]))
+            m = score(d["val"]["y"], pred, ok)
+            m.update(subject=subject, seed=seed, lesion=lk, leads=leads)
+            out.append(m)
     elif arm == "lda_track2":
-        scores, ok, extra = run_lda(d["train"], d["val"], seed, "track2", leads)
+        from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
+        track = "track2"
+        Xtr = d["train"][track + "_x"]; y = d["train"]["y"]
+        n, k, dim = Xtr.shape
+        clf = LDA(solver="lsqr", shrinkage="auto").fit(Xtr.reshape(-1, dim), np.repeat(y, k))
+        for lk, leads in LESION_SETS.items():
+            Xv = zero_leads(d["val"][track + "_x"], track, leads)
+            p = clf.predict_proba(Xv.reshape(-1, dim)).reshape(len(Xv), k, 4)
+            ok = np.ones(p.shape[:2], bool)
+            pred, rej = aggregate(p, ok, fallback_class(d["train"]["y"]))
+            m = score(d["val"]["y"], pred, ok)
+            m.update(subject=subject, seed=seed, lesion=lk, leads=leads)
+            out.append(m)
     else:
         raise ValueError(arm)
-    pred, rej = aggregate(scores, ok, fallback_class(d["train"]["y"]))
-    m = score(d["val"]["y"], pred, ok)
-    m.update(subject=subject, seed=seed, lesion=lesion_key, leads=leads)
-    return m
+    return out
 
 
 def main_cli():
@@ -103,9 +133,10 @@ def main_cli():
     opts = json.loads(a.opts); opts.setdefault("track", "track2")
     seeds = [int(x) for x in a.seeds.split(",")]; subs = [int(x) for x in a.subjects.split(",")]
     t0 = time.time()
-    tasks = [(a.arm, s, k, opts, lk) for lk in LESION_SETS for s in subs for k in seeds]
+    tasks = [(a.arm, s, k, opts) for s in subs for k in seeds]
     with ProcessPoolExecutor(a.jobs) as ex:
-        res = [f.result() for f in [ex.submit(one, *t) for t in tasks]]
+        nested = [f.result() for f in [ex.submit(one_subject_seed, *t) for t in tasks]]
+    res = [m for group in nested for m in group]
     curve = {}
     for lk in LESION_SETS:
         rows = [r for r in res if r["lesion"] == lk]
