@@ -11,6 +11,9 @@ Training: each epoch one random `crop`-step window per training trial, zero init
 one-hot class target on every step (quadratic loss, the only TemporalPatchNet loss).
 Decision (frozen before results): causal free path over the whole 375-step validation segment from a
 zero boundary; outlet outputs averaged over steps t >= BURN, argmax.
+center=True: target one-hot - 1/4 (zero mean). Without an output bias the network can only
+produce the constant part of a one-hot target by saturating hidden units through the bias port,
+which makes them deaf to the input (observed: output within-class sd ~1e-3).
 a_init="diag": A starts as radius*I (each microcolumn a leaky integrator of its own rectified
 signal; no spatial or band prior) instead of radius*orthogonal.
 opt="adam": observe(rate=0) only supplies the centred EP gradient estimate; Adam(lr) applies it
@@ -27,7 +30,7 @@ from .data import load_subject, ROOT
 
 N_CH, N_CLS, BURN = 22, 4, 25
 DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, beta=0.05, rate=1.0, radius=0.9, ds=2,
-                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01, a_init="orth")
+                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01, a_init="orth", center=False)
 
 
 def masks(k, bias=False):
@@ -84,7 +87,7 @@ def one(subject, seed, opts):
         for i in range(0, len(order), o["batch"]):
             j = order[i:i + o["batch"]]; s = rng.integers(0, T - L + 1, len(j))
             u = np.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
-            tgt = np.zeros((len(j), L, N_CLS)); tgt[np.arange(len(j)), :, ylearn[j]] = 1.0
+            tgt = np.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0); tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
             net.reset()
             r = net.observe(u, tgt, beta=o["beta"], rate=0.0 if adam else o["rate"])
             if adam and r.updated: adam.step(net, r.delta)

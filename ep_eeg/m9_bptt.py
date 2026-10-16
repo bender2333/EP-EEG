@@ -11,7 +11,7 @@ import numpy as np, torch
 from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
-DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth")
+DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False)
 
 
 class Rec(torch.nn.Module):
@@ -47,7 +47,8 @@ def one(subject, seed, opts):
         for i in range(0, len(order), o["batch"]):
             j = order[i:i + o["batch"]]; s = rng.integers(0, T - L + 1, len(j))
             u = torch.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
-            tgt = torch.zeros(len(j), L, N_CLS, dtype=u.dtype); tgt[np.arange(len(j)), :, ylearn[j]] = 1.0
+            tgt = torch.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0, dtype=u.dtype)
+            tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
             loss = 0.5 * ((net(u) - tgt) ** 2).mean(); opt.zero_grad(); loss.backward(); opt.step()
         if (ep + 1) % 5 == 0 or ep == o["epochs"] - 1:
             with torch.no_grad():
