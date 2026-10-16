@@ -3,6 +3,8 @@
 h[t] = A tanh(h[t-1]) + B u[t],  y[t] = C tanh(h[t]); centred +-beta EP over the whole path.
 Topology (ADR-0002 anchoring kept): lead c drives only its k microcolumns (mask B); microcolumns are
 all-to-all recurrent (mask A, no spatial prior); every microcolumn reaches the 4 outlets (mask C).
+Optional constant input port (opts["bias"]>0, mask: all microcolumns) breaks the odd symmetry
+y(-u)=-y(u) of the bias-free recurrence; without it the time-averaged output cannot carry power.
 Input: frozen eval-layer segment (EOG regression -> 4-35 Hz -> per-lead z, fit on T runs 0-3; cue+0.5..3.5 s),
 no Hjorth, 250 -> 125 Hz by taking every 2nd sample, tanh(x/3). drive per step = 22 raw samples.
 Training: each epoch one random `crop`-step window per training trial, zero initial boundary,
@@ -21,18 +23,20 @@ from .data import load_subject, ROOT
 
 N_CH, N_CLS, BURN = 22, 4, 25
 DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, beta=0.05, rate=1.0, radius=0.9, ds=2,
-                shuffle_labels=False, eval_every=5)
+                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0)
 
 
-def masks(k):
-    H = N_CH * k; B = np.zeros((H, N_CH), bool)
+def masks(k, bias=False):
+    H = N_CH * k; B = np.zeros((H, N_CH + int(bias)), bool)
     for c in range(N_CH): B[c * k:(c + 1) * k, c] = True
+    if bias: B[:, N_CH] = True
     return {"A": np.ones((H, H), bool), "B": B, "C": np.ones((N_CLS, H), bool)}
 
 
-def inputs(seg, ds):
-    """(n,22,750) z-scored segment -> (n, 750/ds, 22) compressed drive."""
-    return np.tanh(seg[:, :, ::ds] / 3.0).transpose(0, 2, 1).astype(float)
+def inputs(seg, ds, bias=0.0, gain=1.0):
+    """(n,22,750) z-scored segment -> (n, 750/ds, 22[+1]) compressed drive (+ constant port)."""
+    u = gain * np.tanh(seg[:, :, ::ds] / 3.0).transpose(0, 2, 1).astype(float)
+    return np.concatenate([u, np.full(u.shape[:2] + (1,), bias)], 2) if bias else u
 
 
 def predict(net, U):
@@ -47,11 +51,11 @@ def kappa_acc(y, p):
 def one(subject, seed, opts):
     o = {**DEFAULTS, **opts}; t0 = time.time()
     d = load_subject(subject)
-    Utr, ytr = inputs(d["train"]["seg"], o["ds"]), d["train"]["y"].astype(int)
-    Uva, yva = inputs(d["val"]["seg"], o["ds"]), d["val"]["y"].astype(int)
+    Utr, ytr = inputs(d["train"]["seg"], o["ds"], o["bias"], o["gain"]), d["train"]["y"].astype(int)
+    Uva, yva = inputs(d["val"]["seg"], o["ds"], o["bias"], o["gain"]), d["val"]["y"].astype(int)
     rng = np.random.default_rng(seed)
     ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
-    net = PartitionedTemporalPatchNet(N_CH, N_CH * o["k"], N_CLS, masks=masks(o["k"]), seed=seed,
+    net = PartitionedTemporalPatchNet(Utr.shape[2], N_CH * o["k"], N_CLS, masks=masks(o["k"], o["bias"] > 0), seed=seed,
                                       initial_radius=o["radius"])
     T, L = Utr.shape[1], o["crop"]
     stats = {"attempted": 0, "updated": 0, "reasons": {}, "halvings": 0, "curve": []}

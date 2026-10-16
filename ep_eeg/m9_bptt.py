@@ -11,16 +11,16 @@ import numpy as np, torch
 from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
-DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False)
+DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0)
 
 
 class Rec(torch.nn.Module):
-    def __init__(self, k, radius, seed):
-        super().__init__(); H = N_CH * k; g = np.random.default_rng(seed); m = masks(k)
+    def __init__(self, k, radius, seed, bias=False):
+        super().__init__(); H = N_CH * k; g = np.random.default_rng(seed); m = masks(k, bias); n_in = N_CH + int(bias)
         q, _ = np.linalg.qr(g.normal(size=(H, H)))
         self.m = {n: torch.tensor(v, dtype=torch.float64) for n, v in m.items()}
         self.A = torch.nn.Parameter(torch.tensor(radius * q))
-        self.B = torch.nn.Parameter(torch.tensor(g.normal(size=(H, N_CH)) / np.sqrt(H)) * self.m["B"])
+        self.B = torch.nn.Parameter(torch.tensor(g.normal(size=(H, n_in)) / np.sqrt(H)) * self.m["B"])
         self.C = torch.nn.Parameter(torch.tensor(g.normal(size=(N_CLS, H)) / np.sqrt(H)))
         self.H = H
 
@@ -35,10 +35,10 @@ class Rec(torch.nn.Module):
 def one(subject, seed, opts):
     o = {**DEFAULTS, **opts}; t0 = time.time(); torch.set_num_threads(2)
     d = load_subject(subject)
-    Utr, ytr = torch.tensor(inputs(d["train"]["seg"], o["ds"])), d["train"]["y"].astype(int)
-    Uva, yva = torch.tensor(inputs(d["val"]["seg"], o["ds"])), d["val"]["y"].astype(int)
+    Utr, ytr = torch.tensor(inputs(d["train"]["seg"], o["ds"], o["bias"], o["gain"])), d["train"]["y"].astype(int)
+    Uva, yva = torch.tensor(inputs(d["val"]["seg"], o["ds"], o["bias"], o["gain"])), d["val"]["y"].astype(int)
     rng = np.random.default_rng(seed); ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
-    net = Rec(o["k"], o["radius"], seed); opt = torch.optim.Adam(net.parameters(), lr=o["lr"])
+    net = Rec(o["k"], o["radius"], seed, o["bias"] > 0); opt = torch.optim.Adam(net.parameters(), lr=o["lr"])
     T, L = Utr.shape[1], o["crop"]; curve = []
     pred = lambda U: net(U)[:, BURN:].mean(1).argmax(1).numpy()
     for ep in range(o["epochs"]):
