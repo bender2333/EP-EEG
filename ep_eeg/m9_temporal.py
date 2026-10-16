@@ -11,6 +11,8 @@ Training: each epoch one random `crop`-step window per training trial, zero init
 one-hot class target on every step (quadratic loss, the only TemporalPatchNet loss).
 Decision (frozen before results): causal free path over the whole 375-step validation segment from a
 zero boundary; outlet outputs averaged over steps t >= BURN, argmax.
+opt="adam": observe(rate=0) only supplies the centred EP gradient estimate; Adam(lr) applies it
+(same optimizer as the BPTT control, so the comparison isolates the gradient estimator).
 settle_rate = accepted observe() calls / attempted (phase failures and asymmetric contrasts are refusals).
 """
 from __future__ import annotations
@@ -23,7 +25,7 @@ from .data import load_subject, ROOT
 
 N_CH, N_CLS, BURN = 22, 4, 25
 DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, beta=0.05, rate=1.0, radius=0.9, ds=2,
-                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0)
+                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01)
 
 
 def masks(k, bias=False):
@@ -37,6 +39,20 @@ def inputs(seg, ds, bias=0.0, gain=1.0):
     """(n,22,750) z-scored segment -> (n, 750/ds, 22[+1]) compressed drive (+ constant port)."""
     u = gain * np.tanh(seg[:, :, ::ds] / 3.0).transpose(0, 2, 1).astype(float)
     return np.concatenate([u, np.full(u.shape[:2] + (1,), bias)], 2) if bias else u
+
+
+class Adam:
+    def __init__(self, lr, b1=0.9, b2=0.999, eps=1e-8):
+        self.lr, self.b1, self.b2, self.eps, self.t, self.m, self.v = lr, b1, b2, eps, 0, {}, {}
+
+    def step(self, net, grad):
+        self.t += 1; P = net.parameters(); new = {}
+        for k, g in grad.items():
+            self.m[k] = self.b1 * self.m.get(k, 0) + (1 - self.b1) * g
+            self.v[k] = self.b2 * self.v.get(k, 0) + (1 - self.b2) * g * g
+            mh, vh = self.m[k] / (1 - self.b1 ** self.t), self.v[k] / (1 - self.b2 ** self.t)
+            new[k] = (P[k] - self.lr * mh / (np.sqrt(vh) + self.eps)) * net.masks[k]
+        net.set_parameters(new)
 
 
 def predict(net, U):
@@ -57,7 +73,7 @@ def one(subject, seed, opts):
     ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
     net = PartitionedTemporalPatchNet(Utr.shape[2], N_CH * o["k"], N_CLS, masks=masks(o["k"], o["bias"] > 0), seed=seed,
                                       initial_radius=o["radius"])
-    T, L = Utr.shape[1], o["crop"]
+    T, L = Utr.shape[1], o["crop"]; adam = Adam(o["lr"]) if o["opt"] == "adam" else None
     stats = {"attempted": 0, "updated": 0, "reasons": {}, "halvings": 0, "curve": []}
     for ep in range(o["epochs"]):
         te = time.time(); order = rng.permutation(len(Utr))
@@ -66,7 +82,8 @@ def one(subject, seed, opts):
             u = np.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
             tgt = np.zeros((len(j), L, N_CLS)); tgt[np.arange(len(j)), :, ylearn[j]] = 1.0
             net.reset()
-            r = net.observe(u, tgt, beta=o["beta"], rate=o["rate"])
+            r = net.observe(u, tgt, beta=o["beta"], rate=0.0 if adam else o["rate"])
+            if adam and r.updated: adam.step(net, r.delta)
             stats["attempted"] += 1; stats["updated"] += int(r.updated)
             stats["reasons"][r.reason] = stats["reasons"].get(r.reason, 0) + 1
             stats["halvings"] += r.contrast_halvings
