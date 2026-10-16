@@ -11,7 +11,7 @@ import numpy as np, torch
 from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
-DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False, loss="step")
+DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False, loss="step", c_init="random")
 
 
 class Rec(torch.nn.Module):
@@ -40,8 +40,23 @@ def one(subject, seed, opts):
     Uva, yva = torch.tensor(inputs(d["val"]["seg"], o["ds"], o["bias"], o["gain"])), d["val"]["y"].astype(int)
     rng = np.random.default_rng(seed); ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
     net = Rec(o["k"], o["radius"], seed, o["bias"] > 0, o["a_init"]); opt = torch.optim.Adam(net.parameters(), lr=o["lr"])
+    k0 = None
+    if o["c_init"] == "ridge":  # same closed-form reservoir readout as m9_temporal.ridge_readout
+        from sklearn.linear_model import RidgeCV
+        with torch.no_grad():
+            A, B = net.A * net.m["A"], net.B * net.m["B"]; h = torch.zeros(len(Utr), net.H, dtype=Utr.dtype); acc = 0
+            for t in range(Utr.shape[1]):
+                h = torch.tanh(h) @ A.T + Utr[:, t] @ B.T
+                if t >= BURN: acc = acc + torch.tanh(h)
+            F = (acc / (Utr.shape[1] - BURN)).numpy()
+        Y = np.full((len(ylearn), N_CLS), -0.25 if o["center"] else 0.0); Y[np.arange(len(ylearn)), ylearn] += 1.0
+        r = RidgeCV(alphas=np.logspace(-3, 3, 13), fit_intercept=False).fit(F, Y)
+        with torch.no_grad(): net.C.copy_(torch.tensor(r.coef_))
     T, L = Utr.shape[1], o["crop"]; curve = []
     pred = lambda U: net(U)[:, BURN:].mean(1).argmax(1).numpy()
+    if o["c_init"] == "ridge":
+        with torch.no_grad(): k0 = kappa_acc(yva, pred(Uva))[0]
+        print(f"[bptt s{subject} seed{seed}] epoch 0 ridge reservoir k_va={k0:.3f}", flush=True)
     for ep in range(o["epochs"]):
         order = rng.permutation(len(Utr))
         for i in range(0, len(order), o["batch"]):
@@ -60,7 +75,7 @@ def one(subject, seed, opts):
             print(f"[bptt s{subject} seed{seed}] {curve[-1]}", flush=True)
     with torch.no_grad(): p = pred(Uva)
     k, a = kappa_acc(yva, p)
-    return {"subject": subject, "seed": seed, "kappa_val": k, "acc_val": a, "settle_rate": 1.0,
+    return {"subject": subject, "seed": seed, "kappa_val": k, "acc_val": a, "settle_rate": 1.0, "kappa_val_epoch0": k0,
             "curve": curve, "pred": p.tolist(), "y": yva.tolist(), "wall_s": time.time() - t0}
 
 
@@ -80,7 +95,8 @@ def main():
     summ = {"commit": commit, "stage": "M9", "arm": a.arm, "opts": {**DEFAULTS, **opts}, "subjects": subs,
             "seeds": seeds, "kappa_val": float(np.mean([r["kappa_val"] for r in res])),
             "kappa_seed_sd": float(np.std(by_seed)), "acc_val": float(np.mean([r["acc_val"] for r in res])),
-            "settle_rate": 1.0,
+            "settle_rate": 1.0, "kappa_val_epoch0": (float(np.mean([r["kappa_val_epoch0"] for r in res]))
+                                                     if res[0]["kappa_val_epoch0"] is not None else None),
             "per_subject_kappa": {s: float(np.mean([r["kappa_val"] for r in res if r["subject"] == s])) for s in subs},
             "wall_s": time.time() - t0, "python": platform.python_version()}
     out = ROOT / "receipts" / "M9" / a.arm / f"{commit}{a.tag}"; out.mkdir(parents=True, exist_ok=True)
