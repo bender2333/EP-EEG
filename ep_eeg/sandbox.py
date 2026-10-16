@@ -56,6 +56,7 @@ class SandboxConfig:
     leak: float = 0.1          # learning_neuron_model leak (0.1 default; 1.0 = symmetric tanh(v/2))
     slots: int = 1             # Learner slots (M5 outlet extension; 1 = single action slot)
     use_warm: bool = False     # M7: per trial, sub-windows in time order, warm = previous free state
+    n_classes: int = 4         # M8: 5 = four MI classes + inter-trial rest
 
 
 def lead_xy():
@@ -103,7 +104,7 @@ class Sandbox:
         from eval.preprocess import channel_of_feature
         lead_of_feat = channel_of_feature(cfg.track); d = len(lead_of_feat)
         k = cfg.k; nc = 22 * k
-        self.n_classes = 4
+        self.n_classes = int(cfg.n_classes)
         # slots>1: parallel 4-way readouts (cadence equal slots); total outlets = 4 * slots
         self.n_slots = int(cfg.slots)
         n_out = self.n_classes * self.n_slots
