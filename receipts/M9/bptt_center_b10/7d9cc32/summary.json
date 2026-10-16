@@ -1,0 +1,50 @@
+{
+ "commit": "7d9cc32",
+ "stage": "M9",
+ "arm": "bptt_center_b10",
+ "opts": {
+  "k": 2,
+  "crop": 125,
+  "epochs": 100,
+  "batch": 16,
+  "lr": 0.01,
+  "radius": 0.9,
+  "ds": 2,
+  "shuffle_labels": false,
+  "bias": 10,
+  "gain": 3.0,
+  "a_init": "orth",
+  "center": true
+ },
+ "subjects": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.018518518518518514,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.2638888888888889,
+ "settle_rate": 1.0,
+ "per_subject_kappa": {
+  "1": 0.16666666666666663,
+  "2": 0.0,
+  "3": 0.0,
+  "4": 0.0,
+  "5": 0.0,
+  "6": 0.0,
+  "7": 0.0,
+  "8": 0.0,
+  "9": 0.0
+ },
+ "wall_s": 811.8791542053223,
+ "python": "3.12.3"
+}
