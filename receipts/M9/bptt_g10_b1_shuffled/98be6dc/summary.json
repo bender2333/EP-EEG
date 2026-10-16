@@ -1,0 +1,32 @@
+{
+ "commit": "98be6dc",
+ "stage": "M9",
+ "arm": "bptt_g10_b1_shuffled",
+ "opts": {
+  "k": 2,
+  "crop": 125,
+  "epochs": 100,
+  "batch": 16,
+  "lr": 0.01,
+  "radius": 0.9,
+  "ds": 2,
+  "shuffle_labels": true,
+  "bias": 1.0,
+  "gain": 10.0
+ },
+ "subjects": [
+  1
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.0,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.25,
+ "settle_rate": 1.0,
+ "per_subject_kappa": {
+  "1": 0.0
+ },
+ "wall_s": 51.23507905006409,
+ "python": "3.12.3"
+}
