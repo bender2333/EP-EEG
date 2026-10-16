@@ -94,7 +94,7 @@ def one(arm, subject_tag, seed, opts):
         subs = [1, 2, 3]; sp = opts.pop("split", "t04_val45")
         d = concat([load_subject_m8(s, sp) for s in subs], subs)
     sb = Sandbox(SandboxConfig(**{**BASE, **opts}), seed); logs = []
-    st = fit(sb, d["train"], logs.append); res = {"arm": arm, "subjects": subs, "seed": seed,
+    st = fit(sb, d["train"], lambda m: (logs.append(m), print(f"[{arm} {subs} s{seed}] {m}", flush=True))); res = {"arm": arm, "subjects": subs, "seed": seed,
                                                   "train": st, "log": logs, "train_wall": time.time() - t0}
     if "val" in d:
         act, ok = infer(sb, d["val"]); res["val"] = score(d["val"], act, ok)

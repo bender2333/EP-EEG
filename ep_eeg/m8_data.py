@@ -66,6 +66,10 @@ def load_subject_m8(subject, split="t04_val45"):
     train, sc = timeline(tr, pp)
     out = {"train": train}
     if split == "t04_val45": out["val"], _ = timeline(runs[4:], pp, sc)
+    if split == "full6":  # user-approved stage gate: E session as test only (preproc/scaler fit on T)
+        from eval.holdout import load_e_session
+        runsE = [P.run_arrays(r) for r in load_e_session(subject, gate_token="STAGE_GATE")]
+        out["val"], _ = timeline(runsE, pp, sc)
     return out
 
 
