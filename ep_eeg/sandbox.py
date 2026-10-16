@@ -55,6 +55,7 @@ class SandboxConfig:
     damping: int = 3
     leak: float = 0.1          # learning_neuron_model leak (0.1 default; 1.0 = symmetric tanh(v/2))
     slots: int = 1             # Learner slots (M5 outlet extension; 1 = single action slot)
+    use_warm: bool = False     # M7: per trial, sub-windows in time order, warm = previous free state
 
 
 def lead_xy():
@@ -99,7 +100,8 @@ def col_edges(cfg, rng):
 class Sandbox:
     def __init__(self, cfg: SandboxConfig, seed: int):
         self.cfg = cfg; rng = np.random.default_rng(seed)
-        d = 44 if cfg.track == "track1" else 66
+        from eval.preprocess import channel_of_feature
+        lead_of_feat = channel_of_feature(cfg.track); d = len(lead_of_feat)
         k = cfg.k; nc = 22 * k
         self.n_classes = 4
         # slots>1: parallel 4-way readouts (cadence equal slots); total outlets = 4 * slots
@@ -107,7 +109,6 @@ class Sandbox:
         n_out = self.n_classes * self.n_slots
         n = d + nc + n_out
         self.d, self.nc, self.n, self.n_out = d, nc, n, n_out
-        lead_of_feat = np.tile(np.arange(22), d // 22)
         col0, out0 = d, d + nc
         self.col0, self.out0 = col0, out0
         syn = {}; kind = {}
@@ -182,6 +183,7 @@ class Sandbox:
         return smin
 
     def fit(self, X, y, log):
+        if self.cfg.use_warm: return self.fit_warm(X, y, log)
         cfg = self.cfg
         if cfg.shuffle_labels: y = self.rng.permutation(y)
         Xs = X.reshape(-1, X.shape[-1]); ys = np.repeat(y, X.shape[1])
@@ -215,6 +217,58 @@ class Sandbox:
                 stats["failed"] = f"certificate_epoch_{ep}"; break
         return stats
 
+    def fit_warm(self, X, y, log):
+        """M7: batches of trials; within a trial sub-windows t=0..T-1 in order, each
+        Learner.step warm-started from the previous sub-window's free state; warm=None
+        at trial start (reset between trials). A refused step resets warm to None.
+        192 trials / batch 32 = 6 batches x 11 sub-windows = 66 steps/epoch (as M1)."""
+        cfg = self.cfg
+        if cfg.shuffle_labels: y = self.rng.permutation(y)
+        n, T, d = X.shape
+        stats = {"attempted_batches": 0, "refused_batches": 0, "attempted_rows": 0, "accepted_rows": 0,
+                 "row_sweeps": 0.0, "epochs": [], "refusal_phases": {}, "warm_steps": 0}
+        c0 = self.cert(); stats["cert_init"] = c0
+        if not c0["certified"]:
+            stats["failed"] = "certificate_init"; return stats
+        for ep in range(cfg.epochs):
+            t0 = time.time(); idx = self.rng.permutation(n)
+            for b in np.array_split(idx, max(1, n // cfg.batch)):
+                warm = None  # reset between trials
+                yb = y[b] if self.n_slots == 1 else np.column_stack([y[b]] * self.n_slots)
+                for t in range(T):
+                    stats["attempted_batches"] += 1; stats["attempted_rows"] += len(b)
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            st, rep = self.learner.step(self.drive(X[b, t]), yb, warm=warm)
+                        stats["warm_steps"] += int(warm is not None)
+                        warm = st.free  # carry activity to next sub-window
+                        stats["accepted_rows"] += len(b); stats["row_sweeps"] += rep["total_row_sweeps"]
+                        if cfg.rowmass_project > 0: stats["min_projection"] = min(stats.get("min_projection", 1.0), self.project_rowmass())
+                    except LearningPhaseError as e:
+                        warm = None
+                        stats["refused_batches"] += 1
+                        stats["refusal_phases"][e.phase] = stats["refusal_phases"].get(e.phase, 0) + 1
+            c = self.cert(); c.update(epoch=ep, wall=time.time() - t0, projection=stats.get("min_projection", 1.0))
+            stats["epochs"].append(c)
+            log(f"epoch {ep} cert={c['certified']} row_mass={c['row_mass']:.3f} refused={stats['refused_batches']}/{stats['attempted_batches']}")
+            if not c["certified"]:
+                stats["failed"] = f"certificate_epoch_{ep}"; break
+        return stats
+
+    def predict_warm(self, X):
+        """M7 inference: same warm chaining per trial (all trials as one batch)."""
+        n, T, d = X.shape; acts, oks = [], []; state = None
+        for t in range(T):
+            eq = self.learner.brain.equilibrate(self.drive(X[:, t]), budget=self.cfg.free_steps,
+                                                tolerance=self.cfg.tolerance, damping=self.cfg.damping, state=state)
+            a = np.asarray(eq.state.activation)[:, self.outputs]
+            ok = np.asarray(eq.converged) & np.all(np.isfinite(a), 1)
+            if self.n_slots > 1: a = a.reshape(-1, self.n_slots, self.n_classes).mean(1)
+            acts.append(a); oks.append(ok)
+            state = eq.state if np.all(np.isfinite(np.asarray(eq.state.v))) else None
+        return np.stack(acts, 1), np.stack(oks, 1)
+
     def free_states(self, X):
         n, k, d = X.shape
         eq = self.learner.brain.equilibrate(self.drive(X.reshape(-1, d)), budget=self.cfg.free_steps,
@@ -222,6 +276,7 @@ class Sandbox:
         return eq
 
     def predict(self, X):
+        if self.cfg.use_warm: return self.predict_warm(X)
         n, k, d = X.shape
         eq = self.free_states(X)
         act = np.asarray(eq.state.activation)[:, self.outputs]
@@ -260,6 +315,8 @@ PRESETS = {
     "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
     "ep_slots4": {"slots": 4},
+    "ep_raw_warm": {"track": "raw", "use_warm": True},   # M7
+    "ep_raw_cold": {"track": "raw"},                     # M7 ablation: raw input, cold start
 }
 
 

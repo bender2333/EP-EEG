@@ -95,7 +95,18 @@ def track2(sw):
     return np.concatenate([np.log(v0), mob, comp], axis=-1)  # (...,66): [act22, mob22, comp22]
 
 
-TRACKS = {"track1": track1, "track2": track2}
+RAW_T = 25  # M7: samples kept per lead per sub-window (125 -> 25 by 5-sample block mean)
+
+
+def rawwin(sw, t_eff=RAW_T):
+    """M7 raw-waveform encoding (no Hjorth): (...,22,125) -> (...,22*t_eff), lead-major.
+    Block-mean downsampling along time only (125/t_eff samples per block)."""
+    blk = sw.shape[-1] // t_eff
+    x = sw[..., :blk * t_eff].reshape(*sw.shape[:-1], t_eff, blk).mean(-1)
+    return x.reshape(*sw.shape[:-2], -1)
+
+
+TRACKS = {"track1": track1, "track2": track2, "raw": rawwin}
 
 
 class FeatureScaler:
@@ -110,5 +121,7 @@ class FeatureScaler:
 
 def channel_of_feature(track: str):
     """Return the lead index for each feature column."""
+    if track == "raw":
+        return np.repeat(np.arange(N_EEG), RAW_T)
     k = 2 if track == "track1" else 3
     return np.tile(np.arange(N_EEG), k)

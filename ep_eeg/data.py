@@ -35,6 +35,15 @@ def build(subject, runs_fit, runs_eval_sets):
     return out
 
 
+def add_raw(d):
+    """M7: raw-waveform sub-window inputs from cached preprocessed segments (no Hjorth)."""
+    if "raw_x" in d["train"]: return d
+    F = {n: P.rawwin(P.subwindows(d[n]["seg"].astype(np.float64))) for n in d}
+    sc = P.FeatureScaler().fit(F["train"])
+    for n in d: d[n]["raw_x"] = sc.transform(F[n]).astype(np.float32)
+    return d
+
+
 def load_subject(subject: int):
     """T-only: train = runs 0-3, val = runs 4-5."""
     CACHE.mkdir(exist_ok=True)
@@ -49,7 +58,7 @@ def load_subject(subject: int):
     d = {"train": {}, "val": {}}
     for k in z.files:
         s, kk = k.split("__"); d[s][kk] = z[k]
-    return d
+    return add_raw(d)
 
 
 def load_subject_gate(subject: int):
