@@ -11,6 +11,8 @@ Training: each epoch one random `crop`-step window per training trial, zero init
 one-hot class target on every step (quadratic loss, the only TemporalPatchNet loss).
 Decision (frozen before results): causal free path over the whole 375-step validation segment from a
 zero boundary; outlet outputs averaged over steps t >= BURN, argmax.
+a_init="diag": A starts as radius*I (each microcolumn a leaky integrator of its own rectified
+signal; no spatial or band prior) instead of radius*orthogonal.
 opt="adam": observe(rate=0) only supplies the centred EP gradient estimate; Adam(lr) applies it
 (same optimizer as the BPTT control, so the comparison isolates the gradient estimator).
 settle_rate = accepted observe() calls / attempted (phase failures and asymmetric contrasts are refusals).
@@ -25,7 +27,7 @@ from .data import load_subject, ROOT
 
 N_CH, N_CLS, BURN = 22, 4, 25
 DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, beta=0.05, rate=1.0, radius=0.9, ds=2,
-                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01)
+                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01, a_init="orth")
 
 
 def masks(k, bias=False):
@@ -73,6 +75,8 @@ def one(subject, seed, opts):
     ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
     net = PartitionedTemporalPatchNet(Utr.shape[2], N_CH * o["k"], N_CLS, masks=masks(o["k"], o["bias"] > 0), seed=seed,
                                       initial_radius=o["radius"])
+    if o["a_init"] == "diag":
+        P = net.parameters(); P["A"] = o["radius"] * np.eye(net.hidden); net.set_parameters(P)
     T, L = Utr.shape[1], o["crop"]; adam = Adam(o["lr"]) if o["opt"] == "adam" else None
     stats = {"attempted": 0, "updated": 0, "reasons": {}, "halvings": 0, "curve": []}
     for ep in range(o["epochs"]):
