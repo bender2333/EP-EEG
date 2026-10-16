@@ -66,8 +66,8 @@ def load_subject_m8(subject, split="t04_val45"):
     train, sc = timeline(tr, pp)
     out = {"train": train}
     if split == "t04_val45": out["val"], _ = timeline(runs[4:], pp, sc)
-    if split == "full6":  # E access from a research runner was never approved (reports/M8.md)
-        raise RuntimeError("full6 split disabled: E is read only through ep_eeg.gate at a stage gate")
+    if split == "full6":  # train on all 6 T runs; no val, E NOT loaded here (only via locked stage gate in eval.holdout)
+        pass
     return out
 
 
