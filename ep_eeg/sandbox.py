@@ -218,7 +218,7 @@ class Sandbox:
         return stats
 
     def fit_warm(self, X, y, log):
-        """M7: batches of trials; within a trial sub-windows t=0..T-1 in order, each
+        """M7: batches of trials; within a trial time steps (sub-windows or raw chunks) t=0..T-1 in order, each
         Learner.step warm-started from the previous sub-window's free state; warm=None
         at trial start (reset between trials). A refused step resets warm to None.
         192 trials / batch 32 = 6 batches x 11 sub-windows = 66 steps/epoch (as M1)."""
@@ -300,7 +300,8 @@ def run_arm(train, val, seed, **opts):
     extra = {"cfg": asdict(cfg), "params": sb.n_params, "train": stats, "log": logs, "train_wall": time.time() - t}
     n = len(val["y"])
     if "failed" in stats:  # failed certificate: all sub-windows refused (counted; fallback class)
-        return np.zeros((n, 11, 4)), np.zeros((n, 11), bool), extra
+        T = val[cfg.track + "_x"].shape[1]
+        return np.zeros((n, T, 4)), np.zeros((n, T), bool), extra
     act, ok = sb.predict(val[cfg.track + "_x"])
     _, tr_ok = sb.predict(train[cfg.track + "_x"])
     extra["train_settle_rate"] = float(tr_ok.mean())
@@ -316,7 +317,9 @@ PRESETS = {
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
     "ep_slots4": {"slots": 4},
     "ep_raw_warm": {"track": "raw", "use_warm": True},   # M7
-    "ep_raw_cold": {"track": "raw"},                     # M7 ablation: raw input, cold start
+    "ep_raw_cold": {"track": "raw"},                     # superseded M7 draft
+    "ep_rawseq_warm": {"track": "rawseq", "use_warm": True},  # M7 final: 30 raw steps, warm chained
+    "ep_rawseq_cold": {"track": "rawseq"},                    # M7 ablation: same input, cold start
 }
 
 

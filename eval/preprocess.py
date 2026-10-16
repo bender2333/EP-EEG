@@ -106,7 +106,17 @@ def rawwin(sw, t_eff=RAW_T):
     return x.reshape(*sw.shape[:-2], -1)
 
 
-TRACKS = {"track1": track1, "track2": track2, "raw": rawwin}
+SEQ_C = 25  # M7 (final): raw samples per time step; 750/25 = 30 steps, no downsampling
+
+
+def rawseq(seg, c=SEQ_C):
+    """M7 final: full cue+0.5..3.5 s segment (n,22,750) -> time-ordered drive sequence
+    (n, 750/c, 22*c), lead-major, every raw sample kept (no sub-window cut, no Hjorth)."""
+    n, L, T = seg.shape
+    return seg.reshape(n, L, T // c, c).transpose(0, 2, 1, 3).reshape(n, T // c, L * c)
+
+
+TRACKS = {"track1": track1, "track2": track2, "raw": rawwin, "rawseq": rawseq}
 
 
 class FeatureScaler:
@@ -123,5 +133,7 @@ def channel_of_feature(track: str):
     """Return the lead index for each feature column."""
     if track == "raw":
         return np.repeat(np.arange(N_EEG), RAW_T)
+    if track == "rawseq":
+        return np.repeat(np.arange(N_EEG), SEQ_C)
     k = 2 if track == "track1" else 3
     return np.tile(np.arange(N_EEG), k)

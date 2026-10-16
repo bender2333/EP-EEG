@@ -41,6 +41,9 @@ def add_raw(d):
     F = {n: P.rawwin(P.subwindows(d[n]["seg"].astype(np.float64))) for n in d}
     sc = P.FeatureScaler().fit(F["train"])
     for n in d: d[n]["raw_x"] = sc.transform(F[n]).astype(np.float32)
+    G = {n: P.rawseq(d[n]["seg"].astype(np.float64)) for n in d}
+    sc = P.FeatureScaler().fit(G["train"])
+    for n in d: d[n]["rawseq_x"] = sc.transform(G[n]).astype(np.float32)
     return d
 
 
