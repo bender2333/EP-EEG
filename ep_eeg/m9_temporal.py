@@ -11,6 +11,14 @@ Training: each epoch one random `crop`-step window per training trial, zero init
 one-hot class target on every step (quadratic loss, the only TemporalPatchNet loss).
 Decision (frozen before results): causal free path over the whole 375-step validation segment from a
 zero boundary; outlet outputs averaged over steps t >= BURN, argmax.
+loss="mean": nudge toward the time-averaged-output target. Per-step targets are set to the free
+output plus the constant correction (target - mean_t free output) on t >= BURN (free output before),
+so the nudging force is the same at every step: as beta -> 0 the centred EP contrast estimates the
+gradient of 0.5*||mean_t y - target||^2 instead of the per-step loss, which is dominated by the
+fast oscillations of the waveform and drives the readout to zero.
+c_init="ridge": before any EP update, C is fitted in closed form (ridge, no intercept, alpha by CV)
+from the time-averaged tanh(h) of the untrained net to the (centred) one-hot targets. The epoch-0
+score of that reservoir is recorded, so EP fine-tuning is judged against its own starting point.
 center=True: target one-hot - 1/4 (zero mean). Without an output bias the network can only
 produce the constant part of a one-hot target by saturating hidden units through the bias port,
 which makes them deaf to the input (observed: output within-class sd ~1e-3).
@@ -30,7 +38,7 @@ from .data import load_subject, ROOT
 
 N_CH, N_CLS, BURN = 22, 4, 25
 DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, beta=0.05, rate=1.0, radius=0.9, ds=2,
-                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01, a_init="orth", center=False)
+                shuffle_labels=False, eval_every=5, bias=0.0, gain=1.0, opt="sgd", lr=0.01, a_init="orth", center=False, c_init="random", loss="step")
 
 
 def masks(k, bias=False):
@@ -60,6 +68,18 @@ class Adam:
         net.set_parameters(new)
 
 
+def hidden_mean(net, U):
+    return np.tanh(net.imagine(U, state=np.zeros((len(U), net.hidden))).hidden)[:, BURN:].mean(1)
+
+
+def ridge_readout(net, U, y, center):
+    from sklearn.linear_model import RidgeCV
+    Y = np.full((len(y), N_CLS), -0.25 if center else 0.0); Y[np.arange(len(y)), y] += 1.0
+    r = RidgeCV(alphas=np.logspace(-3, 3, 13), fit_intercept=False).fit(hidden_mean(net, U), Y)
+    P = net.parameters(); P["C"] = r.coef_ * net.masks["C"]; net.set_parameters(P)
+    return float(r.alpha_)
+
+
 def predict(net, U):
     out = net.imagine(U, state=np.zeros((len(U), net.hidden))).output
     return out[:, BURN:].mean(1)
@@ -80,14 +100,24 @@ def one(subject, seed, opts):
                                       initial_radius=o["radius"])
     if o["a_init"] == "diag":
         P = net.parameters(); P["A"] = o["radius"] * np.eye(net.hidden); net.set_parameters(P)
+    if o["c_init"] == "ridge":
+        stats_alpha = ridge_readout(net, Utr, ylearn, o["center"])
     T, L = Utr.shape[1], o["crop"]; adam = Adam(o["lr"]) if o["opt"] == "adam" else None
     stats = {"attempted": 0, "updated": 0, "reasons": {}, "halvings": 0, "curve": []}
+    if o["c_init"] == "ridge":
+        k0, _ = kappa_acc(yva, predict(net, Uva).argmax(1))
+        stats.update(ridge_alpha=stats_alpha, kappa_val_epoch0=k0)
+        print(f"[s{subject} seed{seed}] ep 0 (ridge reservoir) k_va={k0:.3f}", flush=True)
     for ep in range(o["epochs"]):
         te = time.time(); order = rng.permutation(len(Utr))
         for i in range(0, len(order), o["batch"]):
             j = order[i:i + o["batch"]]; s = rng.integers(0, T - L + 1, len(j))
             u = np.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
             tgt = np.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0); tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
+            if o["loss"] == "mean":
+                free = net.imagine(u, state=np.zeros((len(j), net.hidden))).output
+                corr = tgt[:, :1] - free[:, BURN:].mean(1, keepdims=True)
+                tgt = free.copy(); tgt[:, BURN:] += corr
             net.reset()
             r = net.observe(u, tgt, beta=o["beta"], rate=0.0 if adam else o["rate"])
             if adam and r.updated: adam.step(net, r.delta)
@@ -105,6 +135,7 @@ def one(subject, seed, opts):
     hid = np.tanh(net.imagine(Uva[:8], state=np.zeros((8, net.hidden))).hidden)
     k, a = kappa_acc(yva, pred)
     return {"subject": subject, "seed": seed, "kappa_val": k, "acc_val": a,
+            "kappa_val_epoch0": stats.get("kappa_val_epoch0"),
             "settle_rate": stats["updated"] / max(stats["attempted"], 1), "train": stats,
             "hidden_activity_std": float(hid.std()), "pred": pred.tolist(), "y": yva.tolist(),
             "A_radius": float(np.abs(np.linalg.eigvals(net.parameters()["A"])).max()),
@@ -128,6 +159,8 @@ def main():
             "seeds": seeds, "kappa_val": float(np.mean([r["kappa_val"] for r in res])),
             "kappa_seed_sd": float(np.std(by_seed)), "acc_val": float(np.mean([r["acc_val"] for r in res])),
             "settle_rate": float(np.mean([r["settle_rate"] for r in res])),
+            "kappa_val_epoch0": (float(np.mean([r["kappa_val_epoch0"] for r in res]))
+                                 if res[0].get("kappa_val_epoch0") is not None else None),
             "per_subject_kappa": {s: float(np.mean([r["kappa_val"] for r in res if r["subject"] == s])) for s in subs},
             "wall_s": time.time() - t0, "python": platform.python_version()}
     out = ROOT / "receipts" / "M9" / a.arm / f"{commit}{a.tag}"; out.mkdir(parents=True, exist_ok=True)

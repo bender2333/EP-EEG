@@ -11,7 +11,7 @@ import numpy as np, torch
 from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
-DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False)
+DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False, loss="step")
 
 
 class Rec(torch.nn.Module):
@@ -49,7 +49,10 @@ def one(subject, seed, opts):
             u = torch.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
             tgt = torch.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0, dtype=u.dtype)
             tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
-            loss = 0.5 * ((net(u) - tgt) ** 2).mean(); opt.zero_grad(); loss.backward(); opt.step()
+            out = net(u)
+            if o["loss"] == "mean": loss = 0.5 * ((out[:, BURN:].mean(1) - tgt[:, 0]) ** 2).mean()
+            else: loss = 0.5 * ((out - tgt) ** 2).mean()
+            opt.zero_grad(); loss.backward(); opt.step()
         if (ep + 1) % 5 == 0 or ep == o["epochs"] - 1:
             with torch.no_grad():
                 curve.append({"epoch": ep + 1, "kappa_train": kappa_acc(ytr, pred(Utr))[0],
