@@ -10,6 +10,7 @@ import time, warnings
 from dataclasses import dataclass, asdict
 import numpy as np
 import cadence as cd
+from cadence.certificate import ep_structure, lipschitz_constant
 from cadence.learning import Learner, LearnerConfig, learning_neuron_model, LearningPhaseError
 from cadence.certificate import certificate
 from eval.t_only_bnci import CHANNEL_NAMES
@@ -39,6 +40,7 @@ class SandboxConfig:
     input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
     train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
     tie_time: bool = False  # C2 (track "envtraj"): synapse lead_c[tau] -> col_c[j] shares one efficacy across leads
+    cert_free_only: bool = False  # ADR-0012 (proposed): row mass over free->free edges only (inputs are sources)
     curve_every: int = 0  # >0: every N epochs record trial-level train/val kappa (needs a monitor in fit)
     project_plastic_only: bool = False  # True: rowmass projection rescales only plastic synapses (strict freeze)
     epochs: int = 10
@@ -180,7 +182,19 @@ class Sandbox:
 
     def cert(self):
         c = certificate(self.learner.brain)
-        return {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
+        out = {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
+        if self.cfg.cert_free_only:
+            # Cascade (block-triangular) argument: input neurons have no incoming edges, so they settle on
+            # their own at rate 1 - dt; given them, the free block contracts at 1 - dt (1 - L rho_free).
+            br = self.learner.brain; m = br.neuron_model
+            fixed = ep_structure(br, fixed_inputs=list(range(self.d))).fixed_incoming_mass
+            w = np.abs(np.asarray(br.weights)); post, pre = self.conn.post, self.conn.pre
+            rho = float(np.bincount(post, w * (pre >= self.d), minlength=self.n).max())
+            L = lipschitz_constant(m); rate = max(1 - m.dt * (1 - L * rho), 1 - m.dt)
+            out.update(certified_full=out["certified"], row_mass_full=out["row_mass"], rate_full=out["rate"],
+                       certified=bool(fixed == 0 and L * rho < 1 and m.adaptation is None),
+                       row_mass=rho, rate=float(rate), fixed_incoming_mass=float(fixed))
+        return out
 
     def project_rowmass(self):
         """Symmetric per-neuron projection: any neuron whose incoming |W| sum exceeds
@@ -191,12 +205,14 @@ class Sandbox:
         gscale = np.asarray(br.weights) / np.where(eff == 0, 1, eff)  # effective/efficacy factor
         smin = 1.0
         for _ in range(20):
-            inc = np.bincount(post, weights=np.abs(eff * gscale), minlength=self.n)
+            counted = (self.kind != "in") if self.cfg.cert_free_only else np.ones(len(eff), bool)
+            inc = np.bincount(post, weights=np.abs(eff * gscale) * counted, minlength=self.n)
             over = inc > lim * (1 - 1e-9)
             if not over.any(): break
             f = np.ones(self.n); f[over] = lim / inc[over] * (1 - 1e-6)
             fac = np.minimum(f[post], np.where(self.kind == "in", 1.0, f[pre]))
             if self.cfg.project_plastic_only: fac = np.where(self.learner.plastic_synapses, fac, 1.0)
+            if self.cfg.cert_free_only: fac = np.where(counted, fac, 1.0)  # input synapses are not in the budget
             eff = eff * fac; smin = min(smin, float(fac.min()))
         if smin < 1.0:
             br.efficacy = eff
