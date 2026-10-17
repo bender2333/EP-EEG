@@ -299,7 +299,7 @@ def exp2b(k, seed, subs, holdout=None, g0=0.05, epochs=100, batch=16, lr=1e-3, w
         ev = evaluate(); rec["per_subject"] = ev
         rec["kappa_mean_train_subjects"] = float(np.mean([ev[s]["kappa_val"] for s in tr_subs]))
         if holdout is not None: rec["kappa_heldout"] = ev[f"heldout_{holdout}"]["kappa_val"]
-        rec["B_norm"] = float((net.B * net.mask).norm()); return rec
+        rec["B_norm"] = float((net.B * net.mask).detach().norm()); return rec
 
     if not state["curve"]:
         state["curve"].append(rec_eval({"epoch": 0, "loss": None}))
