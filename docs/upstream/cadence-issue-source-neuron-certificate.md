@@ -7,7 +7,8 @@
 `cadence.certificate.certificate(graph)` sets `row_mass` to the maximum, over neurons, of the summed absolute effective weights on each neuron's incoming edges. It counts **every** incoming edge, including edges from neurons that have no incoming edges themselves (one-way input or source neurons). Downstream (EP-EEG, BCI IV-2a), the network has 66 input neurons driven by standardized features, feeding 88 recurrent "column" neurons and 4 motor neurons. Under this certificate:
 
 - Input synapses take up to about 0.56 of the 1/L = 2 row-mass budget at initialization. Scaling them up breaks the certificate (ρ_full = 2.96 / 5.22 / 9.72 at σ_in × 4 / 8 / 16).
-- As a result, the column potentials stay within about ±0.25, and a linear fit from the inputs explains the column activations with R² = 0.9998. The recurrent "lake" is a linear projection in every certified configuration we ran.
+- Source activations are bounded (|ρ| ≤ 1), so the drive a free neuron receives from its sources is at most the source mass it is allowed to carry. With a symmetric ρ (`learning_neuron_model(leak=1.0)`, i.e. tanh(v/2)), this keeps the column potentials within about ±0.25. A linear fit from the inputs then explains the column activations with R² = 0.9998: the recurrent "lake" is a linear projection in every certified configuration we ran. Scaling the drive instead of the synapses only saturates the source neurons.
+- With the refinement below, scaling the input synapses ×64 moves the columns into the curved part of tanh (R² 0.948, 4.3% of activations above 0.95). The free block still certifies (ρ_free ≤ 1.8, L·ρ_free ≤ 0.9), and free-phase convergence is 1.0.
 
 ## Proposed refinement (sound, not a relaxation)
 
@@ -25,4 +26,4 @@ Once input synapses are scaled past `scale_cap` (default 8, here 3), the first `
 
 ## Downstream evidence
 
-EP-EEG `reports/M9.md` (M9c sections) and `docs/adr/0012-free-block-certificate.md`. Under the refined certificate, every operating point σ_in × {1 … 128} certifies with ρ_free = 0.889 at init, and free-phase convergence is 1.0.
+EP-EEG `reports/M9.md` (M9c sections) and `docs/adr/0012-free-block-certificate.md` (accepted downstream, implemented as an adapter-side check; the cadence `qualified=True` residual check is kept as a second guard). Under the refined certificate, every operating point σ_in × {1 … 128} certifies with ρ_free = 0.889 at init, and free-phase convergence is 1.0.
