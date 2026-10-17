@@ -39,6 +39,7 @@ class SandboxConfig:
     input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
     train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
     tie_time: bool = False  # C2 (track "envtraj"): synapse lead_c[tau] -> col_c[j] shares one efficacy across leads
+    curve_every: int = 0  # >0: every N epochs record trial-level train/val kappa (needs a monitor in fit)
     project_plastic_only: bool = False  # True: rowmass projection rescales only plastic synapses (strict freeze)
     epochs: int = 10
     batch: int = 32
@@ -198,9 +199,10 @@ class Sandbox:
             eff = eff * fac; smin = min(smin, float(fac.min()))
         if smin < 1.0:
             br.efficacy = eff
+            self.n_projections = getattr(self, "n_projections", 0) + 1
         return smin
 
-    def fit(self, X, y, log):
+    def fit(self, X, y, log, monitor=None):
         if self.cfg.use_warm: return self.fit_warm(X, y, log)
         cfg = self.cfg
         if cfg.shuffle_labels: y = self.rng.permutation(y)
@@ -230,6 +232,9 @@ class Sandbox:
             s = stats.get("min_projection", 1.0)
             c = self.cert(); c.update(epoch=ep, wall=time.time() - t, projection=s)
             stats["epochs"].append(c)
+            c["n_projections"] = getattr(self, "n_projections", 0)
+            if monitor is not None and cfg.curve_every > 0 and ((ep + 1) % cfg.curve_every == 0 or ep == cfg.epochs - 1):
+                stats.setdefault("curve", []).append({"epoch": ep + 1, **monitor(self)})
             log(f"epoch {ep} cert={c['certified']} row_mass={c['row_mass']:.3f} refused={stats['refused_batches']}/{stats['attempted_batches']}")
             if not c["certified"]:
                 stats["failed"] = f"certificate_epoch_{ep}"; break
@@ -305,15 +310,30 @@ class Sandbox:
         return act.reshape(n, k, self.n_classes), ok.reshape(n, k)
 
 
-def train_sandbox(train, seed, **opts):
+def trial_kappa_monitor(train, val):
+    """Trial-level kappa through the frozen aggregation (same rule as the final score)."""
+    from eval.scoring import aggregate, fallback_class
+    from sklearn.metrics import cohen_kappa_score
+    fb = fallback_class(train["y"])
+    def mon(sb):
+        out = {}
+        for name, d in (("kappa_train", train), ("kappa_val", val)):
+            act, ok = sb.predict(d[sb.cfg.track + "_x"]); pred, _ = aggregate(act, ok, fb)
+            out[name] = float(cohen_kappa_score(d["y"], pred))
+        return out
+    return mon
+
+
+def train_sandbox(train, seed, monitor_data=None, **opts):
     cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed); logs = []
-    stats = sb.fit(train[cfg.track + "_x"], train["y"], logs.append)
+    mon = trial_kappa_monitor(*monitor_data) if (monitor_data is not None and cfg.curve_every > 0) else None
+    stats = sb.fit(train[cfg.track + "_x"], train["y"], logs.append, monitor=mon)
     return sb, stats, logs
 
 
 def run_arm(train, val, seed, **opts):
     t = time.time()
-    sb, stats, logs = train_sandbox(train, seed, **opts)
+    sb, stats, logs = train_sandbox(train, seed, monitor_data=(train, val), **opts)
     cfg = sb.cfg
     extra = {"cfg": asdict(cfg), "params": sb.n_params, "train": stats, "log": logs, "train_wall": time.time() - t}
     n = len(val["y"])
