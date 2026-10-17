@@ -11,6 +11,8 @@ Each fast unit j owns one slow unit s_j; the readout C sees only the slow block.
   initialised to `lam` (0.98 ~ 0.4 s at 125 Hz).
 Loss: the per-step quadratic loss (EP-native). Decision (frozen, as M9): mean y over t >= BURN, argmax.
 Baseline on the SAME untrained structure: ridge (RidgeClassifierCV, standardised) on mean_{t>=BURN} g(s).
+lam_learn=False: lam stays at its initial value (with per-step loss on short crops the learnt lam drifts
+from 0.98 to ~0.7, i.e. the slow unit becomes fast).
 rho_max>0: after every optimizer step the fast recurrence is rescaled, A <- A*rho_max/rho(A) when
 rho(A) > rho_max (prevents the stiffness / blow-up seen in M9; the same projection can wrap an EP update).
 Monitoring: spectral radius of the fast recurrence A (and of the full block matrix for "tpn") per eval.
@@ -24,7 +26,7 @@ from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
 DEFAULTS = dict(variant="square", k=2, crop=125, epochs=100, batch=16, lr=0.01, radius=0.9, ds=2, bias=0.0,
-                gain=3.0, lam=0.98, center=False, shuffle_labels=False, rho_max=0.0)
+                gain=3.0, lam=0.98, center=False, shuffle_labels=False, rho_max=0.0, lam_learn=True)
 
 
 class RouteB(torch.nn.Module):
@@ -80,9 +82,10 @@ def one(subject, seed, opts):
     Uva, yva = torch.tensor(inputs(d["val"]["seg"], o["ds"], o["bias"], o["gain"])), d["val"]["y"].astype(int)
     rng = np.random.default_rng(seed); ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
     torch.manual_seed(seed); net = RouteB(o, seed)
+    if not o["lam_learn"]: net.a.requires_grad_(False)
     k_ridge = ridge_baseline(net, Utr, ylearn, Uva, yva)
     print(f"[B {o['variant']} s{subject}] ridge baseline (untrained) k_va={k_ridge:.3f} {net.radii()}", flush=True)
-    opt = torch.optim.Adam(net.parameters(), lr=o["lr"]); T, L = Utr.shape[1], o["crop"]; curve = []
+    opt = torch.optim.Adam([p for p in net.parameters() if p.requires_grad], lr=o["lr"]); T, L = Utr.shape[1], o["crop"]; curve = []
     pred = lambda U: net(U)[:, BURN:].mean(1).argmax(1).numpy()
     for ep in range(o["epochs"]):
         order = rng.permutation(len(Utr))
