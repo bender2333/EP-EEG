@@ -222,6 +222,113 @@ def exp2(k, seed, subs, epochs=100, crop=125, batch=16, lr_ab=1e-3):
     print(json.dumps(summ, indent=1), flush=True)
 
 
+# ---------------------------------------------------------------- exp2b: Phase 2 fixes (corrected-alpha reservoir)
+# (a) full 375-step segments for training (same as ridge init / eval), (b) A frozen, train only B (+C_s,b_s),
+# (c) leave-one-subject-out: shared B learned on 8 subjects, held-out subject gets only a ridge readout on its own
+# train split with frozen learned B. float32 throughout (same width / data / epochs; precision only).
+DT = torch.float32
+
+
+class PooledB(torch.nn.Module):
+    def __init__(self, A, B, mask, Cs, bs, mus, sds):
+        super().__init__()
+        self.register_buffer("AT", torch.tensor(A.T, dtype=DT).contiguous())  # frozen A
+        self.B = torch.nn.Parameter(torch.tensor(B, dtype=DT)); self.register_buffer("mask", torch.tensor(mask, dtype=DT))
+        self.register_buffer("mu", torch.tensor(np.stack(mus), dtype=DT)); self.register_buffer("sd", torch.tensor(np.stack(sds), dtype=DT))
+        self.C = torch.nn.Parameter(torch.tensor(np.stack(Cs), dtype=DT)); self.b = torch.nn.Parameter(torch.tensor(np.stack(bs), dtype=DT))
+
+    def feats(self, u):  # raw time-averaged tanh(h), t>=BURN
+        BT = (self.B * self.mask).T; h = torch.zeros(len(u), self.AT.shape[0], dtype=DT); acc = 0
+        for t in range(u.shape[1]):
+            h = torch.tanh(h) @ self.AT + u[:, t] @ BT
+            if t >= BURN: acc = acc + torch.tanh(h)
+        return acc / (u.shape[1] - BURN)
+
+    def forward(self, u, sid):
+        f = (self.feats(u) - self.mu[sid]) / self.sd[sid]
+        return torch.einsum("nh,nch->nc", f, self.C[sid]) + self.b[sid]
+
+
+def _feats_np(net, u, bs=96):
+    with torch.no_grad():
+        return torch.cat([net.feats(u[i:i + bs]) for i in range(0, len(u), bs)]).double().numpy()
+
+
+def exp2b(k, seed, subs, holdout=None, g0=0.05, epochs=100, batch=16, lr=1e-3, wd=1e-3):
+    """holdout=None: pooled over all subs (fix a+b). holdout=s: LOSO fold (fix c), trained on subs minus s."""
+    torch.set_num_threads(int(__import__("os").environ.get("M95_THREADS", "8")))
+    tag = "pooled" if holdout is None else f"loso_s{holdout}"
+    ck = OUT / "exp2b" / f"k{k}_seed{seed}_g{g0:g}" / tag; ck.mkdir(parents=True, exist_ok=True)
+    A, B, mask, info = reservoir_b(k, seed, g0)
+    tr_subs = [s for s in subs if s != holdout]
+    data = {s: load_subject(s) for s in subs}
+    Ua = {s: {sp: U(data[s][sp]["seg"]).to(DT) for sp in ("train", "val")} for s in subs}
+    ya = {s: {sp: data[s][sp]["y"].astype(int) for sp in ("train", "val")} for s in subs}
+    # ridge init in the exact float32 feature space used for training (full 375 steps), lambda by 5-fold CV on train
+    tmp = PooledB(A, B, mask, [np.zeros((N_CLS, A.shape[0]))], [np.zeros(N_CLS)], [np.zeros(A.shape[0])], [np.ones(A.shape[0])])
+    Cs, bs_, mus, sds, init = [], [], [], [], {}
+    for s in tr_subs:
+        F, Fv = _feats_np(tmp, Ua[s]["train"]), _feats_np(tmp, Ua[s]["val"])
+        lam, cv, p, _, _ = ridge(F, ya[s]["train"], Fv); mu, sd = F.mean(0), F.std(0) + 1e-8
+        rc = RidgeClassifier(alpha=lam).fit((F - mu) / sd, ya[s]["train"])
+        Cs.append(rc.coef_); bs_.append(rc.intercept_); mus.append(mu); sds.append(sd)
+        init[s] = {"lambda": lam, "kappa_val": kappa_acc(ya[s]["val"], p)[0]}
+    net = PooledB(A, B, mask, Cs, bs_, mus, sds)
+    opt = torch.optim.Adam([net.B, net.C, net.b], lr=lr, weight_decay=wd)
+    Utr = torch.cat([Ua[s]["train"] for s in tr_subs]); ytr = np.concatenate([ya[s]["train"] for s in tr_subs])
+    sid = np.concatenate([[i] * len(ya[s]["train"]) for i, s in enumerate(tr_subs)])
+    Y = -torch.ones(len(ytr), N_CLS, dtype=DT); Y[np.arange(len(ytr)), ytr] = 1.0
+    rng = np.random.default_rng(seed); state = {"epoch": 0, "curve": [], "wall": 0.0}
+    if (ck / "state.pt").exists():
+        z = torch.load(ck / "state.pt", weights_only=False); net.load_state_dict(z["net"]); opt.load_state_dict(z["opt"])
+        rng.bit_generator.state = z["rng"]; state = z["state"]; print(f"[exp2b {tag}] resumed at epoch {state['epoch']}", flush=True)
+
+    def evaluate():
+        out = {}
+        with torch.no_grad():
+            for i, s in enumerate(tr_subs):
+                u = Ua[s]["val"]; p = torch.cat([net(u[j:j + 96], torch.full((len(u[j:j + 96]),), i)) for j in range(0, len(u), 96)]).argmax(1).numpy()
+                kv, av = kappa_acc(ya[s]["val"], p); out[s] = {"kappa_val": kv, "acc_val": av, "pred_counts": np.bincount(p, minlength=4).tolist()}
+        if holdout is not None:  # held-out subject: ridge readout only, on its own train split, frozen learned B
+            s = holdout; F, Fv = _feats_np(net, Ua[s]["train"]), _feats_np(net, Ua[s]["val"])
+            lam, cv, p, _, _ = ridge(F, ya[s]["train"], Fv); kv, av = kappa_acc(ya[s]["val"], p)
+            out[f"heldout_{s}"] = {"kappa_val": kv, "acc_val": av, "lambda": lam, "pred_counts": np.bincount(p, minlength=4).tolist()}
+        return out
+
+    def rec_eval(rec):
+        ev = evaluate(); rec["per_subject"] = ev
+        rec["kappa_mean_train_subjects"] = float(np.mean([ev[s]["kappa_val"] for s in tr_subs]))
+        if holdout is not None: rec["kappa_heldout"] = ev[f"heldout_{holdout}"]["kappa_val"]
+        rec["B_norm"] = float((net.B * net.mask).norm()); return rec
+
+    if not state["curve"]:
+        state["curve"].append(rec_eval({"epoch": 0, "loss": None}))
+        torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "rng": rng.bit_generator.state, "state": state}, ck / "state.pt")
+        print(f"[exp2b {tag}] {json.dumps({kk: v for kk, v in state['curve'][-1].items() if kk != 'per_subject'})}", flush=True)
+    while state["epoch"] < epochs:
+        te = time.time(); order = rng.permutation(len(Utr)); L = []
+        for i in range(0, len(order), batch):
+            j = order[i:i + batch]
+            loss = 0.5 * ((net(Utr[j], torch.tensor(sid[j])) - Y[j]) ** 2).mean()
+            opt.zero_grad(); loss.backward(); opt.step(); L.append(loss.item())
+        state["epoch"] += 1; ttrain = time.time() - te
+        rec = rec_eval({"epoch": state["epoch"], "loss": float(np.mean(L)), "loss_max_batch": float(np.max(L)), "train_wall": ttrain})
+        rec["epoch_wall"] = time.time() - te; state["curve"].append(rec); state["wall"] += rec["epoch_wall"]
+        torch.save({"net": net.state_dict(), "opt": opt.state_dict(), "rng": rng.bit_generator.state, "state": state}, ck / "state.tmp")
+        (ck / "state.tmp").replace(ck / "state.pt")
+        print(f"[exp2b {tag}] {json.dumps({kk: v for kk, v in rec.items() if kk != 'per_subject'})}", flush=True)
+    c0, c1 = state["curve"][0], state["curve"][-1]
+    summ = {"k": k, "H": N_CH * k, "seed": seed, "g0": g0, "holdout": holdout, "train_subjects": tr_subs, "reservoir": info,
+            "ridge_init": init, "wall_s": state["wall"], "epochs": state["epoch"],
+            "per_subject_ep0": {s: c0["per_subject"][s]["kappa_val"] for s in tr_subs},
+            "per_subject_final": {s: c1["per_subject"][s]["kappa_val"] for s in tr_subs},
+            "pred_counts_final": {s: c1["per_subject"][s]["pred_counts"] for s in tr_subs}}
+    if holdout is not None:
+        summ["heldout_ep0"] = c0["per_subject"][f"heldout_{holdout}"]; summ["heldout_final"] = c1["per_subject"][f"heldout_{holdout}"]
+    (ck / "summary.json").write_text(json.dumps(summ, indent=1)); (ck / "curve.json").write_text(json.dumps(state["curve"]))
+    (ck / "DONE").write_text("ok"); print(f"[exp2b {tag}] DONE", flush=True)
+
+
 def summarize1(seeds, ks, subs):
     rows = {}
     for seed in seeds:
@@ -234,8 +341,9 @@ def summarize1(seeds, ks, subs):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("cmd"); ap.add_argument("--seeds", default="0")
-    ap.add_argument("--ks", default="2,8,32,128"); ap.add_argument("--k", type=int, default=32); ap.add_argument("--lr_ab", type=float, default=1e-3); ap.add_argument("--g0", type=float, default=0.05)
+    ap.add_argument("--ks", default="2,8,32,128"); ap.add_argument("--k", type=int, default=32); ap.add_argument("--lr_ab", type=float, default=1e-3); ap.add_argument("--g0", type=float, default=0.05); ap.add_argument("--holdout", type=int, default=None)
     a = ap.parse_args(); subs = list(range(1, 10)); seeds = [int(x) for x in a.seeds.split(",")]; ks = [int(x) for x in a.ks.split(",")]
     if a.cmd == "exp1": exp1(seeds, ks, subs); summarize1(seeds, ks, subs)
     elif a.cmd == "exp1b": exp1b(seeds, ks, subs, a.g0)
     elif a.cmd == "exp2": exp2(a.k, seeds[0], subs, lr_ab=a.lr_ab)
+    elif a.cmd == "exp2b": exp2b(a.k, seeds[0], subs, holdout=a.holdout, g0=a.g0)
