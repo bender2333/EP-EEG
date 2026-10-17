@@ -5,10 +5,12 @@ Inputs project one-way to the columns of their own lead; columns are reciprocal
 (group-specific edge set / init); columns <-> outlet reciprocal.
 """
 from __future__ import annotations
+from functools import partial
 import time, warnings
 from dataclasses import dataclass, asdict
 import numpy as np
 import cadence as cd
+from cadence.certificate import ep_structure, lipschitz_constant
 from cadence.learning import Learner, LearnerConfig, learning_neuron_model, LearningPhaseError
 from cadence.certificate import certificate
 from eval.t_only_bnci import CHANNEL_NAMES
@@ -37,6 +39,10 @@ class SandboxConfig:
     sigma_out: float = 0.01
     input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
     train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
+    tie_time: bool = False  # C2 (track "envtraj"): synapse lead_c[tau] -> col_c[j] shares one efficacy across leads
+    cert_free_only: bool = False  # ADR-0012 (proposed): row mass over free->free edges only (inputs are sources)
+    curve_every: int = 0  # >0: every N epochs record trial-level train/val kappa (needs a monitor in fit)
+    project_plastic_only: bool = False  # True: rowmass projection rescales only plastic synapses (strict freeze)
     epochs: int = 10
     batch: int = 32
     shuffle_labels: bool = False
@@ -98,11 +104,16 @@ def col_edges(cfg, rng):
     return pairs, mult
 
 
+ENV_T = 11  # C2: sub-window envelope points per lead
+
+
 class Sandbox:
     def __init__(self, cfg: SandboxConfig, seed: int):
         self.cfg = cfg; rng = np.random.default_rng(seed)
         from eval.preprocess import channel_of_feature
-        lead_of_feat = channel_of_feature(cfg.track); d = len(lead_of_feat)
+        lead_of_feat = (np.repeat(np.arange(22), ENV_T) if cfg.track == "envtraj"
+                        else channel_of_feature(cfg.track)); d = len(lead_of_feat)
+        tie = {}  # (feature, column) -> tie group, C2 only
         k = cfg.k; nc = 22 * k
         self.n_classes = int(cfg.n_classes)
         # slots>1: parallel 4-way readouts (cadence equal slots); total outlets = 4 * slots
@@ -113,10 +124,16 @@ class Sandbox:
         col0, out0 = d, d + nc
         self.col0, self.out0 = col0, out0
         syn = {}; kind = {}
+        # equal start within each tie group; drawn only for C2 so other arms keep their exact init stream
+        w_tied = rng.normal(0, cfg.sigma_in, size=(ENV_T, k)) if cfg.tie_time else None
         for f in range(d):
             for j in range(k):
                 q = col0 + lead_of_feat[f] * k + j
-                syn[(f, q)] = rng.normal(0, cfg.sigma_in); kind[(f, q)] = "in"
+                if cfg.tie_time:
+                    tau = f % ENV_T; syn[(f, q)] = w_tied[tau, j]; tie[(f, q)] = tau * k + j
+                else:
+                    syn[(f, q)] = rng.normal(0, cfg.sigma_in)
+                kind[(f, q)] = "in"
         pairs, mult = col_edges(cfg, rng)
         for (a, b), m in zip(pairs, mult):
             w = rng.normal(0, cfg.sigma_col) * m
@@ -133,6 +150,8 @@ class Sandbox:
             n, pre=pre, post=post,
             populations={"inp": tuple(range(d)), "col": tuple(range(col0, out0)), "out": tuple(range(out0, n))})
         eff = np.array([syn[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
+        self.tie_groups = (np.array([tie.get((p, q), -1) for p, q in zip(self.conn.pre, self.conn.post)], np.int64)
+                           if cfg.tie_time else None)
         self.kind = np.array([kind[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
         bias = np.zeros(n); bias[:d] = cfg.input_bias
         self.brain = cd.NeuralGraph(self.conn, learning_neuron_model(leak=cfg.leak), efficacy=eff, bias=bias)
@@ -151,8 +170,9 @@ class Sandbox:
             warnings.simplefilter("ignore")
             self.learner = Learner(self.brain, self.outputs, config=lc,
                                    plastic_synapses=plastic_syn, plastic_neurons=plastic_n,
-                                   slots=cfg.slots)
+                                   slots=cfg.slots, tie_groups=self.tie_groups)
         n_in = int((plastic_syn & (self.kind == "in")).sum())
+        if self.tie_groups is not None: n_in = int(len(np.unique(self.tie_groups[self.tie_groups >= 0])))
         n_rec = int((plastic_syn & (self.kind != "in")).sum()) // 2
         self.n_params = n_in + n_rec + int(plastic_n.sum())
         self.rng = rng
@@ -162,7 +182,19 @@ class Sandbox:
 
     def cert(self):
         c = certificate(self.learner.brain)
-        return {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
+        out = {"certified": bool(c.certified), "row_mass": float(c.row_mass), "rate": float(c.rate)}
+        if self.cfg.cert_free_only:
+            # Cascade (block-triangular) argument: input neurons have no incoming edges, so they settle on
+            # their own at rate 1 - dt; given them, the free block contracts at 1 - dt (1 - L rho_free).
+            br = self.learner.brain; m = br.neuron_model
+            fixed = ep_structure(br, fixed_inputs=list(range(self.d))).fixed_incoming_mass
+            w = np.abs(np.asarray(br.weights)); post, pre = self.conn.post, self.conn.pre
+            rho = float(np.bincount(post, w * (pre >= self.d), minlength=self.n).max())
+            L = lipschitz_constant(m); rate = max(1 - m.dt * (1 - L * rho), 1 - m.dt)
+            out.update(certified_full=out["certified"], row_mass_full=out["row_mass"], rate_full=out["rate"],
+                       certified=bool(fixed == 0 and L * rho < 1 and m.adaptation is None),
+                       row_mass=rho, rate=float(rate), fixed_incoming_mass=float(fixed))
+        return out
 
     def project_rowmass(self):
         """Symmetric per-neuron projection: any neuron whose incoming |W| sum exceeds
@@ -173,17 +205,21 @@ class Sandbox:
         gscale = np.asarray(br.weights) / np.where(eff == 0, 1, eff)  # effective/efficacy factor
         smin = 1.0
         for _ in range(20):
-            inc = np.bincount(post, weights=np.abs(eff * gscale), minlength=self.n)
+            counted = (self.kind != "in") if self.cfg.cert_free_only else np.ones(len(eff), bool)
+            inc = np.bincount(post, weights=np.abs(eff * gscale) * counted, minlength=self.n)
             over = inc > lim * (1 - 1e-9)
             if not over.any(): break
             f = np.ones(self.n); f[over] = lim / inc[over] * (1 - 1e-6)
             fac = np.minimum(f[post], np.where(self.kind == "in", 1.0, f[pre]))
+            if self.cfg.project_plastic_only: fac = np.where(self.learner.plastic_synapses, fac, 1.0)
+            if self.cfg.cert_free_only: fac = np.where(counted, fac, 1.0)  # input synapses are not in the budget
             eff = eff * fac; smin = min(smin, float(fac.min()))
         if smin < 1.0:
             br.efficacy = eff
+            self.n_projections = getattr(self, "n_projections", 0) + 1
         return smin
 
-    def fit(self, X, y, log):
+    def fit(self, X, y, log, monitor=None):
         if self.cfg.use_warm: return self.fit_warm(X, y, log)
         cfg = self.cfg
         if cfg.shuffle_labels: y = self.rng.permutation(y)
@@ -213,6 +249,9 @@ class Sandbox:
             s = stats.get("min_projection", 1.0)
             c = self.cert(); c.update(epoch=ep, wall=time.time() - t, projection=s)
             stats["epochs"].append(c)
+            c["n_projections"] = getattr(self, "n_projections", 0)
+            if monitor is not None and cfg.curve_every > 0 and ((ep + 1) % cfg.curve_every == 0 or ep == cfg.epochs - 1):
+                stats.setdefault("curve", []).append({"epoch": ep + 1, **monitor(self)})
             log(f"epoch {ep} cert={c['certified']} row_mass={c['row_mass']:.3f} refused={stats['refused_batches']}/{stats['attempted_batches']}")
             if not c["certified"]:
                 stats["failed"] = f"certificate_epoch_{ep}"; break
@@ -288,15 +327,30 @@ class Sandbox:
         return act.reshape(n, k, self.n_classes), ok.reshape(n, k)
 
 
-def train_sandbox(train, seed, **opts):
+def trial_kappa_monitor(train, val):
+    """Trial-level kappa through the frozen aggregation (same rule as the final score)."""
+    from eval.scoring import aggregate, fallback_class
+    from sklearn.metrics import cohen_kappa_score
+    fb = fallback_class(train["y"])
+    def mon(sb):
+        out = {}
+        for name, d in (("kappa_train", train), ("kappa_val", val)):
+            act, ok = sb.predict(d[sb.cfg.track + "_x"]); pred, _ = aggregate(act, ok, fb)
+            out[name] = float(cohen_kappa_score(d["y"], pred))
+        return out
+    return mon
+
+
+def train_sandbox(train, seed, monitor_data=None, **opts):
     cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed); logs = []
-    stats = sb.fit(train[cfg.track + "_x"], train["y"], logs.append)
+    mon = trial_kappa_monitor(*monitor_data) if (monitor_data is not None and cfg.curve_every > 0) else None
+    stats = sb.fit(train[cfg.track + "_x"], train["y"], logs.append, monitor=mon)
     return sb, stats, logs
 
 
 def run_arm(train, val, seed, **opts):
     t = time.time()
-    sb, stats, logs = train_sandbox(train, seed, **opts)
+    sb, stats, logs = train_sandbox(train, seed, monitor_data=(train, val), **opts)
     cfg = sb.cfg
     extra = {"cfg": asdict(cfg), "params": sb.n_params, "train": stats, "log": logs, "train_wall": time.time() - t}
     n = len(val["y"])
@@ -310,12 +364,38 @@ def run_arm(train, val, seed, **opts):
     return act, ok, extra
 
 
+def ridge_arm(train, val, seed, trained=False, **opts):
+    """C0 baseline: untrained (frozen random) sandbox; free-phase column states averaged over the 11
+    sub-windows (qualified ones) -> standardised RidgeClassifierCV. Returned per sub-window as the
+    linear decision function, so the frozen evaluation mean over sub-windows equals ridge on mean states."""
+    from sklearn.linear_model import RidgeClassifierCV
+    t = time.time(); cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed); stats = None
+    if trained:  # same ridge readout on the column states of a fully EP-trained sandbox
+        sb, stats, _ = train_sandbox(train, seed, **opts)
+    def states(X):
+        n, k, d = X.shape; eq = sb.free_states(X)
+        S = np.asarray(eq.state.activation)[:, sb.col0:sb.out0].reshape(n, k, -1)
+        ok = (np.asarray(eq.converged) & np.all(np.isfinite(S.reshape(n * k, -1)), 1)).reshape(n, k)
+        return S, ok
+    Str, oktr = states(train[cfg.track + "_x"]); Sva, okva = states(val[cfg.track + "_x"])
+    w = oktr[..., None].astype(float); F = (Str * w).sum(1) / np.maximum(w.sum(1), 1)
+    mu, sd = F.mean(0), F.std(0) + 1e-9
+    clf = RidgeClassifierCV(alphas=np.logspace(-3, 3, 13)).fit((F - mu) / sd, train["y"])
+    act = clf.decision_function(((Sva - mu) / sd).reshape(-1, F.shape[1])).reshape(*Sva.shape[:2], -1)
+    extra = {"cfg": asdict(cfg), "ridge_alpha": float(clf.alpha_), "train_settle_rate": float(oktr.mean()),
+             "cert": sb.cert(), "train_wall": time.time() - t, "train": stats}
+    return act, okva, extra
+
+
 PRESETS = {
     "ep_track2": {"track": "track2"},
     "ep_track1": {"track": "track1"},
     "ep_shuffled": {"track": "track2", "shuffle_labels": True},
     "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
+    "ep_envtraj": {"track": "envtraj", "tie_time": True, "sigma_in": 0.1 * 3 / 11},  # fan-in matched to Track-2  # C2: 22 leads x 11-point envelope, one settle/trial
+    "ep_envtraj_untied": {"track": "envtraj", "sigma_in": 0.1 * 3 / 11},              # C2 ablation: 968 independent input weights
+    "ep_fixed_strict": {"train_internal": False, "project_plastic_only": True},  # C0: truly frozen sandbox
     "ep_slots4": {"slots": 4},
     "ep_raw_warm": {"track": "raw", "use_warm": True},   # M7
     "ep_raw_cold": {"track": "raw"},                     # superseded M7 draft
@@ -325,6 +405,8 @@ PRESETS = {
 
 
 def arm(name):
+    if name == "ep_fixed_ridge": return ridge_arm
+    if name == "ep_trained_ridge": return partial(ridge_arm, trained=True)
     base = PRESETS[name]
     def f(train, val, seed, **opts):
         return run_arm(train, val, seed, **{**base, **opts})

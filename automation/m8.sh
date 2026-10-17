@@ -4,6 +4,8 @@
 # 100 epochs ≈ several hours per subject; triple ≈ 3x single steps in one process.
 set -euo pipefail; cd "$(dirname "$0")/.."
 if pgrep -f "ep_eeg.run --stage M7" >/dev/null; then echo "M7 still running; abort"; exit 1; fi
+# HALTED (ADR-0010): warm chaining on a certified NeuralGraph has no cross-step memory; see M9.
+echo "M8 halted: superseded by M9 (ADR-0010)"; exit 1
 # EPEEG_GATE removed (revert of 7d71e59): E is never read outside a locked stage gate; full6/E eval was NOT user-approved.
 OPTS='{"epochs":100,"split":"t04_val45"}'  # protocol split: train T runs0-3, val T runs4-5
 # a) single-subject nets (protocol split: train T runs0-3 timeline, val T runs4-5)

@@ -1,0 +1,36 @@
+{
+ "commit": "98be6dc",
+ "stage": "M9",
+ "arm": "ep_tpn_adam_lr0.03",
+ "opts": {
+  "k": 2,
+  "crop": 125,
+  "epochs": 100,
+  "batch": 16,
+  "beta": 0.05,
+  "rate": 1.0,
+  "radius": 0.9,
+  "ds": 2,
+  "shuffle_labels": false,
+  "eval_every": 10,
+  "bias": 1.0,
+  "gain": 10.0,
+  "opt": "adam",
+  "lr": 0.03
+ },
+ "subjects": [
+  1
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.0,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.25,
+ "settle_rate": 1.0,
+ "per_subject_kappa": {
+  "1": 0.0
+ },
+ "wall_s": 5261.65921163559,
+ "python": "3.12.3"
+}

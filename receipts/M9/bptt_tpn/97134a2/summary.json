@@ -1,0 +1,30 @@
+{
+ "commit": "97134a2",
+ "stage": "M9",
+ "arm": "bptt_tpn",
+ "opts": {
+  "k": 2,
+  "crop": 125,
+  "epochs": 40,
+  "batch": 16,
+  "lr": 0.003,
+  "radius": 0.9,
+  "ds": 2,
+  "shuffle_labels": false
+ },
+ "subjects": [
+  1
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.0,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.25,
+ "settle_rate": 1.0,
+ "per_subject_kappa": {
+  "1": 0.0
+ },
+ "wall_s": 14.146466732025146,
+ "python": "3.12.3"
+}

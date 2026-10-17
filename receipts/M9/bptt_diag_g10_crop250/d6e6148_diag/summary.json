@@ -1,0 +1,42 @@
+{
+ "commit": "d6e6148",
+ "stage": "M9",
+ "arm": "bptt_diag_g10_crop250",
+ "opts": {
+  "k": 2,
+  "crop": 250,
+  "epochs": 100,
+  "batch": 16,
+  "lr": 0.01,
+  "radius": 0.9,
+  "ds": 2,
+  "shuffle_labels": false,
+  "bias": 1.0,
+  "gain": 10.0
+ },
+ "subjects": [
+  2,
+  3,
+  4,
+  5,
+  6,
+  7
+ ],
+ "seeds": [
+  0
+ ],
+ "kappa_val": 0.05092592592592593,
+ "kappa_seed_sd": 0.0,
+ "acc_val": 0.2881944444444445,
+ "settle_rate": 1.0,
+ "per_subject_kappa": {
+  "2": 0.0,
+  "3": 0.3055555555555556,
+  "4": 0.0,
+  "5": 0.0,
+  "6": 0.0,
+  "7": 0.0
+ },
+ "wall_s": 918.77032995224,
+ "python": "3.12.3"
+}
