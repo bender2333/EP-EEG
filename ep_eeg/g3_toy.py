@@ -134,8 +134,9 @@ def main():
             res = list(ex.map(_ref, ("full", "int", "sq")))
         elif a.phase == "select":
             res = list(ex.map(_ep, [(t, v, 0, "select") for t in ("full", "int", "sq") for v in VARIANTS]))
-        else:
-            v = json.loads(a.variant); res = list(ex.map(_ep, [("full", v, s, "test") for s in (0, 1, 2)]))
+        else:  # reports/M10-gates.md deviation: list of variants, each on the test split with seeds 0-2
+            vs = json.loads(a.variant); vs = vs if isinstance(vs, list) else [vs]
+            res = list(ex.map(_ep, [("full", v, s, "test") for v in vs for s in (0, 1, 2)]))
     (out / f"{a.phase}.json").write_text(json.dumps(res, indent=1, default=float)); print(out / f"{a.phase}.json")
     for r in res: print({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items() if k not in ("train",)})
 
