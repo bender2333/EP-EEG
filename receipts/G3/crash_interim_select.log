@@ -1,0 +1,9 @@
+[full {'a_init': 'orth', 'opt': 'adam'} s0] 250 r2_eval=0.558 upd 250/250 754s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 250 r2_eval=-0.193 upd 250/250 766s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 500 r2_eval=0.356 upd 500/500 1519s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 750 r2_eval=0.431 upd 750/750 2309s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 1000 r2_eval=0.528 upd 1000/1000 3084s
+[full {'a_init': 'orth', 'opt': 'adam'} s0] 500 r2_eval=0.733 upd 491/500 3334s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 1250 r2_eval=0.471 upd 1250/1250 3839s
+[full {'a_init': 'orth', 'opt': 'sgd'} s0] 1500 r2_eval=0.572 upd 1499/1500 5741s
+[full {'a_init': 'orth', 'opt': 'adam'} s0] 750 r2_eval=0.746 upd 721/750 8659s
