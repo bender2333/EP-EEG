@@ -41,6 +41,55 @@ def reservoir(k, seed):
                         "eff_alpha_range": [float(alpha.min() * min(1, .98 / n0)), float(alpha.max() * min(1, .98 / n0))]}
 
 
+def reservoir_b(k, seed, g0):
+    """Corrected Exp1 (exp1b): diagonal alpha~U(0.5,0.98) kept intact; only the coupling g*W_rec/sqrt(H) is scaled.
+    g starts at g0 and is halved (coupling part only) until spectral radius <= 0.98. g0=0 -> pure diagonal."""
+    gr = np.random.default_rng(1000 + seed); H = N_CH * k
+    alpha = gr.uniform(0.5, 0.98, H); W = gr.normal(size=(H, H)) / np.sqrt(H)
+    B = np.zeros((H, N_CH + 1)); s = 1 / np.sqrt(44)
+    for c in range(N_CH): B[c * k:(c + 1) * k, c] = gr.normal(size=k) * s
+    B[:, N_CH] = gr.normal(size=H) * s
+    g = g0
+    while True:
+        A = np.diag(alpha) + g * W; ev = np.abs(np.linalg.eigvals(A))
+        if ev.max() <= 0.98 or g == 0: break
+        g /= 2
+    d = np.diag(A)
+    info = {"g0": g0, "g": g, "rho": float(ev.max()), "norm2": float(np.linalg.norm(A, 2)),
+            "diag_min": float(d.min()), "diag_q": np.percentile(d, [5, 50, 95]).tolist(), "diag_max": float(d.max()),
+            "eig_abs_q": np.percentile(ev, [0, 5, 50, 95, 100]).tolist(), "offdiag_norm2": float(np.linalg.norm(g * W, 2))}
+    return A, B, (B != 0).astype(float), info
+
+
+def exp1b(seeds, ks, subs, g0):
+    torch.set_num_threads(8); data = {s: load_subject(s) for s in subs}; tag = f"g{g0:g}"
+    for seed in seeds:
+        for k in ks:
+            A, B, m, info = reservoir_b(k, seed, g0); At, Bt = torch.tensor(A), torch.tensor(B)
+            print(f"[exp1b {tag} seed{seed} k{k}] {info}", flush=True)
+            for s in subs:
+                f = OUT / "exp1b" / tag / f"seed{seed}_k{k}_s{s}.json"
+                if f.exists(): continue
+                t0 = time.time(); d = data[s]
+                tf = time.time(); F = feats(At, Bt, U(d["train"]["seg"])); Fv = feats(At, Bt, U(d["val"]["seg"]))
+                tfeat = time.time() - tf; nsteps = (len(F) + len(Fv)) * 375
+                ytr, yva = d["train"]["y"].astype(int), d["val"]["y"].astype(int)
+                lam, cv, p, C, b = ridge(F, ytr, Fv); kv, av = kappa_acc(yva, p)
+                f.parent.mkdir(parents=True, exist_ok=True)
+                f.write_text(json.dumps({"seed": seed, "k": k, "H": N_CH * k, "subject": s, "kappa_val": kv, "acc_val": av,
+                    "lambda": lam, "cv_kappa": cv, "pred_counts": np.bincount(p, minlength=4).tolist(), "reservoir": info,
+                    "feat_wall_s": tfeat, "us_per_trial_step": 1e6 * tfeat / nsteps, "wall_s": time.time() - t0}))
+                print(f"[exp1b {tag} seed{seed} k{k} s{s}] k_va={kv:.3f} lam={lam} {time.time()-t0:.1f}s", flush=True)
+    rows = {}
+    for seed in seeds:
+        for k in ks:
+            r = [json.loads((OUT / "exp1b" / tag / f"seed{seed}_k{k}_s{s}.json").read_text()) for s in subs]
+            rows[f"seed{seed}_k{k}"] = {"mean": float(np.mean([x["kappa_val"] for x in r])), "per": {x["subject"]: x["kappa_val"] for x in r},
+                "lam": {x["subject"]: x["lambda"] for x in r}, "reservoir": r[0]["reservoir"], "wall": sum(x["wall_s"] for x in r),
+                "us_per_trial_step": float(np.mean([x["us_per_trial_step"] for x in r]))}
+    (OUT / "exp1b" / tag / "summary.json").write_text(json.dumps(rows, indent=1))
+
+
 def U(seg):
     return torch.tensor(inputs(seg, DS, PORT, GAIN))  # last column = constant port (PORT, not scaled by gain)
 
@@ -185,7 +234,8 @@ def summarize1(seeds, ks, subs):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("cmd"); ap.add_argument("--seeds", default="0")
-    ap.add_argument("--ks", default="2,8,32,128"); ap.add_argument("--k", type=int, default=32); ap.add_argument("--lr_ab", type=float, default=1e-3)
+    ap.add_argument("--ks", default="2,8,32,128"); ap.add_argument("--k", type=int, default=32); ap.add_argument("--lr_ab", type=float, default=1e-3); ap.add_argument("--g0", type=float, default=0.05)
     a = ap.parse_args(); subs = list(range(1, 10)); seeds = [int(x) for x in a.seeds.split(",")]; ks = [int(x) for x in a.ks.split(",")]
     if a.cmd == "exp1": exp1(seeds, ks, subs); summarize1(seeds, ks, subs)
+    elif a.cmd == "exp1b": exp1b(seeds, ks, subs, a.g0)
     elif a.cmd == "exp2": exp2(a.k, seeds[0], subs, lr_ab=a.lr_ab)
