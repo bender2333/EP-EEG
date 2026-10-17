@@ -327,7 +327,7 @@ def ridge_arm(train, val, seed, **opts):
     w = oktr[..., None].astype(float); F = (Str * w).sum(1) / np.maximum(w.sum(1), 1)
     mu, sd = F.mean(0), F.std(0) + 1e-9
     clf = RidgeClassifierCV(alphas=np.logspace(-3, 3, 13)).fit((F - mu) / sd, train["y"])
-    act = clf.decision_function((Sva - mu) / sd)
+    act = clf.decision_function(((Sva - mu) / sd).reshape(-1, F.shape[1])).reshape(*Sva.shape[:2], -1)
     extra = {"cfg": asdict(cfg), "ridge_alpha": float(clf.alpha_), "train_settle_rate": float(oktr.mean()),
              "cert": sb.cert(), "train_wall": time.time() - t}
     return act, okva, extra
