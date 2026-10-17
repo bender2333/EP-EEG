@@ -11,6 +11,8 @@ Each fast unit j owns one slow unit s_j; the readout C sees only the slow block.
   initialised to `lam` (0.98 ~ 0.4 s at 125 Hz).
 Loss: the per-step quadratic loss (EP-native). Decision (frozen, as M9): mean y over t >= BURN, argmax.
 Baseline on the SAME untrained structure: ridge (RidgeClassifierCV, standardised) on mean_{t>=BURN} g(s).
+rho_max>0: after every optimizer step the fast recurrence is rescaled, A <- A*rho_max/rho(A) when
+rho(A) > rho_max (prevents the stiffness / blow-up seen in M9; the same projection can wrap an EP update).
 Monitoring: spectral radius of the fast recurrence A (and of the full block matrix for "tpn") per eval.
 """
 from __future__ import annotations
@@ -22,7 +24,7 @@ from .data import load_subject, ROOT
 from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
 
 DEFAULTS = dict(variant="square", k=2, crop=125, epochs=100, batch=16, lr=0.01, radius=0.9, ds=2, bias=0.0,
-                gain=3.0, lam=0.98, center=False, shuffle_labels=False)
+                gain=3.0, lam=0.98, center=False, shuffle_labels=False, rho_max=0.0)
 
 
 class RouteB(torch.nn.Module):
@@ -90,6 +92,10 @@ def one(subject, seed, opts):
             tgt = torch.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0, dtype=u.dtype)
             tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
             loss = 0.5 * ((net(u) - tgt) ** 2).mean(); opt.zero_grad(); loss.backward(); opt.step()
+            if o["rho_max"] > 0:
+                with torch.no_grad():
+                    r = float(np.abs(np.linalg.eigvals(net.A.numpy())).max())
+                    if r > o["rho_max"]: net.A.mul_(o["rho_max"] / r)
         if (ep + 1) % 10 == 0 or ep == o["epochs"] - 1:
             with torch.no_grad():
                 curve.append({"epoch": ep + 1, "kappa_train": kappa_acc(ytr, pred(Utr))[0],
