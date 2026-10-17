@@ -122,7 +122,8 @@ class Sandbox:
         col0, out0 = d, d + nc
         self.col0, self.out0 = col0, out0
         syn = {}; kind = {}
-        w_tied = rng.normal(0, cfg.sigma_in, size=(ENV_T, k))  # equal start within each tie group
+        # equal start within each tie group; drawn only for C2 so other arms keep their exact init stream
+        w_tied = rng.normal(0, cfg.sigma_in, size=(ENV_T, k)) if cfg.tie_time else None
         for f in range(d):
             for j in range(k):
                 q = col0 + lead_of_feat[f] * k + j
