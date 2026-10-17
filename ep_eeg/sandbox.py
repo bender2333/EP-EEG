@@ -37,6 +37,7 @@ class SandboxConfig:
     sigma_out: float = 0.01
     input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
     train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
+    tie_time: bool = False  # C2 (track "envtraj"): synapse lead_c[tau] -> col_c[j] shares one efficacy across leads
     project_plastic_only: bool = False  # True: rowmass projection rescales only plastic synapses (strict freeze)
     epochs: int = 10
     batch: int = 32
@@ -99,11 +100,16 @@ def col_edges(cfg, rng):
     return pairs, mult
 
 
+ENV_T = 11  # C2: sub-window envelope points per lead
+
+
 class Sandbox:
     def __init__(self, cfg: SandboxConfig, seed: int):
         self.cfg = cfg; rng = np.random.default_rng(seed)
         from eval.preprocess import channel_of_feature
-        lead_of_feat = channel_of_feature(cfg.track); d = len(lead_of_feat)
+        lead_of_feat = (np.repeat(np.arange(22), ENV_T) if cfg.track == "envtraj"
+                        else channel_of_feature(cfg.track)); d = len(lead_of_feat)
+        tie = {}  # (feature, column) -> tie group, C2 only
         k = cfg.k; nc = 22 * k
         self.n_classes = int(cfg.n_classes)
         # slots>1: parallel 4-way readouts (cadence equal slots); total outlets = 4 * slots
@@ -114,10 +120,15 @@ class Sandbox:
         col0, out0 = d, d + nc
         self.col0, self.out0 = col0, out0
         syn = {}; kind = {}
+        w_tied = rng.normal(0, cfg.sigma_in, size=(ENV_T, k))  # equal start within each tie group
         for f in range(d):
             for j in range(k):
                 q = col0 + lead_of_feat[f] * k + j
-                syn[(f, q)] = rng.normal(0, cfg.sigma_in); kind[(f, q)] = "in"
+                if cfg.tie_time:
+                    tau = f % ENV_T; syn[(f, q)] = w_tied[tau, j]; tie[(f, q)] = tau * k + j
+                else:
+                    syn[(f, q)] = rng.normal(0, cfg.sigma_in)
+                kind[(f, q)] = "in"
         pairs, mult = col_edges(cfg, rng)
         for (a, b), m in zip(pairs, mult):
             w = rng.normal(0, cfg.sigma_col) * m
@@ -134,6 +145,8 @@ class Sandbox:
             n, pre=pre, post=post,
             populations={"inp": tuple(range(d)), "col": tuple(range(col0, out0)), "out": tuple(range(out0, n))})
         eff = np.array([syn[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
+        self.tie_groups = (np.array([tie.get((p, q), -1) for p, q in zip(self.conn.pre, self.conn.post)], np.int64)
+                           if cfg.tie_time else None)
         self.kind = np.array([kind[(p, q)] for p, q in zip(self.conn.pre, self.conn.post)])
         bias = np.zeros(n); bias[:d] = cfg.input_bias
         self.brain = cd.NeuralGraph(self.conn, learning_neuron_model(leak=cfg.leak), efficacy=eff, bias=bias)
@@ -152,8 +165,9 @@ class Sandbox:
             warnings.simplefilter("ignore")
             self.learner = Learner(self.brain, self.outputs, config=lc,
                                    plastic_synapses=plastic_syn, plastic_neurons=plastic_n,
-                                   slots=cfg.slots)
+                                   slots=cfg.slots, tie_groups=self.tie_groups)
         n_in = int((plastic_syn & (self.kind == "in")).sum())
+        if self.tie_groups is not None: n_in = int(len(np.unique(self.tie_groups[self.tie_groups >= 0])))
         n_rec = int((plastic_syn & (self.kind != "in")).sum()) // 2
         self.n_params = n_in + n_rec + int(plastic_n.sum())
         self.rng = rng
@@ -339,6 +353,8 @@ PRESETS = {
     "ep_shuffled": {"track": "track2", "shuffle_labels": True},
     "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
+    "ep_envtraj": {"track": "envtraj", "tie_time": True, "sigma_in": 0.1 * 3 / 11},  # fan-in matched to Track-2  # C2: 22 leads x 11-point envelope, one settle/trial
+    "ep_envtraj_untied": {"track": "envtraj", "sigma_in": 0.1 * 3 / 11},              # C2 ablation: 968 independent input weights
     "ep_fixed_strict": {"train_internal": False, "project_plastic_only": True},  # C0: truly frozen sandbox
     "ep_slots4": {"slots": 4},
     "ep_raw_warm": {"track": "raw", "use_warm": True},   # M7

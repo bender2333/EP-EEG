@@ -37,6 +37,11 @@ def build(subject, runs_fit, runs_eval_sets):
 
 def add_raw(d):
     """M7: raw-waveform sub-window inputs from cached preprocessed segments (no Hjorth)."""
+    if "envtraj_x" not in d["train"]:
+        # C2: per-lead 11-point log-power envelope (Track-2 Activity), lead-major, one vector per trial
+        E = {n: d[n]["track2"][..., :22].transpose(0, 2, 1).reshape(len(d[n]["y"]), 1, -1) for n in d}
+        sc = P.FeatureScaler().fit(E["train"])
+        for n in d: d[n]["envtraj_x"] = sc.transform(E[n]).astype(np.float32)
     if "raw_x" in d["train"]: return d
     F = {n: P.rawwin(P.subwindows(d[n]["seg"].astype(np.float64))) for n in d}
     sc = P.FeatureScaler().fit(F["train"])
