@@ -37,6 +37,7 @@ class SandboxConfig:
     sigma_out: float = 0.01
     input_bias: float = 0.0    # fixed (non-plastic) bias on input neurons
     train_internal: bool = True  # False: column<->column frozen (fixed random sandbox)
+    project_plastic_only: bool = False  # True: rowmass projection rescales only plastic synapses (strict freeze)
     epochs: int = 10
     batch: int = 32
     shuffle_labels: bool = False
@@ -178,6 +179,7 @@ class Sandbox:
             if not over.any(): break
             f = np.ones(self.n); f[over] = lim / inc[over] * (1 - 1e-6)
             fac = np.minimum(f[post], np.where(self.kind == "in", 1.0, f[pre]))
+            if self.cfg.project_plastic_only: fac = np.where(self.learner.plastic_synapses, fac, 1.0)
             eff = eff * fac; smin = min(smin, float(fac.min()))
         if smin < 1.0:
             br.efficacy = eff
@@ -310,12 +312,34 @@ def run_arm(train, val, seed, **opts):
     return act, ok, extra
 
 
+def ridge_arm(train, val, seed, **opts):
+    """C0 baseline: untrained (frozen random) sandbox; free-phase column states averaged over the 11
+    sub-windows (qualified ones) -> standardised RidgeClassifierCV. Returned per sub-window as the
+    linear decision function, so the frozen evaluation mean over sub-windows equals ridge on mean states."""
+    from sklearn.linear_model import RidgeClassifierCV
+    t = time.time(); cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed)
+    def states(X):
+        n, k, d = X.shape; eq = sb.free_states(X)
+        S = np.asarray(eq.state.activation)[:, sb.col0:sb.out0].reshape(n, k, -1)
+        ok = (np.asarray(eq.converged) & np.all(np.isfinite(S.reshape(n * k, -1)), 1)).reshape(n, k)
+        return S, ok
+    Str, oktr = states(train[cfg.track + "_x"]); Sva, okva = states(val[cfg.track + "_x"])
+    w = oktr[..., None].astype(float); F = (Str * w).sum(1) / np.maximum(w.sum(1), 1)
+    mu, sd = F.mean(0), F.std(0) + 1e-9
+    clf = RidgeClassifierCV(alphas=np.logspace(-3, 3, 13)).fit((F - mu) / sd, train["y"])
+    act = clf.decision_function((Sva - mu) / sd)
+    extra = {"cfg": asdict(cfg), "ridge_alpha": float(clf.alpha_), "train_settle_rate": float(oktr.mean()),
+             "cert": sb.cert(), "train_wall": time.time() - t}
+    return act, okva, extra
+
+
 PRESETS = {
     "ep_track2": {"track": "track2"},
     "ep_track1": {"track": "track1"},
     "ep_shuffled": {"track": "track2", "shuffle_labels": True},
     "ep_g1": {"group": "g1"}, "ep_g2": {"group": "g2"}, "ep_g3": {"group": "g3"},
     "ep_sparse": {"group": "sparse"}, "ep_fixed": {"train_internal": False},
+    "ep_fixed_strict": {"train_internal": False, "project_plastic_only": True},  # C0: truly frozen sandbox
     "ep_slots4": {"slots": 4},
     "ep_raw_warm": {"track": "raw", "use_warm": True},   # M7
     "ep_raw_cold": {"track": "raw"},                     # superseded M7 draft
@@ -325,6 +349,7 @@ PRESETS = {
 
 
 def arm(name):
+    if name == "ep_fixed_ridge": return ridge_arm
     base = PRESETS[name]
     def f(train, val, seed, **opts):
         return run_arm(train, val, seed, **{**base, **opts})
