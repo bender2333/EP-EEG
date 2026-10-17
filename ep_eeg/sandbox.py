@@ -5,6 +5,7 @@ Inputs project one-way to the columns of their own lead; columns are reciprocal
 (group-specific edge set / init); columns <-> outlet reciprocal.
 """
 from __future__ import annotations
+from functools import partial
 import time, warnings
 from dataclasses import dataclass, asdict
 import numpy as np
@@ -326,12 +327,14 @@ def run_arm(train, val, seed, **opts):
     return act, ok, extra
 
 
-def ridge_arm(train, val, seed, **opts):
+def ridge_arm(train, val, seed, trained=False, **opts):
     """C0 baseline: untrained (frozen random) sandbox; free-phase column states averaged over the 11
     sub-windows (qualified ones) -> standardised RidgeClassifierCV. Returned per sub-window as the
     linear decision function, so the frozen evaluation mean over sub-windows equals ridge on mean states."""
     from sklearn.linear_model import RidgeClassifierCV
-    t = time.time(); cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed)
+    t = time.time(); cfg = SandboxConfig(**opts); sb = Sandbox(cfg, seed); stats = None
+    if trained:  # same ridge readout on the column states of a fully EP-trained sandbox
+        sb, stats, _ = train_sandbox(train, seed, **opts)
     def states(X):
         n, k, d = X.shape; eq = sb.free_states(X)
         S = np.asarray(eq.state.activation)[:, sb.col0:sb.out0].reshape(n, k, -1)
@@ -343,7 +346,7 @@ def ridge_arm(train, val, seed, **opts):
     clf = RidgeClassifierCV(alphas=np.logspace(-3, 3, 13)).fit((F - mu) / sd, train["y"])
     act = clf.decision_function(((Sva - mu) / sd).reshape(-1, F.shape[1])).reshape(*Sva.shape[:2], -1)
     extra = {"cfg": asdict(cfg), "ridge_alpha": float(clf.alpha_), "train_settle_rate": float(oktr.mean()),
-             "cert": sb.cert(), "train_wall": time.time() - t}
+             "cert": sb.cert(), "train_wall": time.time() - t, "train": stats}
     return act, okva, extra
 
 
@@ -366,6 +369,7 @@ PRESETS = {
 
 def arm(name):
     if name == "ep_fixed_ridge": return ridge_arm
+    if name == "ep_trained_ridge": return partial(ridge_arm, trained=True)
     base = PRESETS[name]
     def f(train, val, seed, **opts):
         return run_arm(train, val, seed, **{**base, **opts})
