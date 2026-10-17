@@ -1,0 +1,108 @@
+"""M9 control: the same masked recurrence as m9_temporal, trained by BPTT (torch, Adam) instead of EP.
+
+Identical input, crops, one-hot quadratic target on every step, masks, init (orthogonal A * radius,
+B,C ~ N(0,1/H)) and decision rule (zero boundary, mean output over t >= BURN). Separates
+"this model class cannot learn from raw waveforms" from "EP learning is the bottleneck".
+"""
+from __future__ import annotations
+import argparse, json, platform, subprocess, time
+from concurrent.futures import ProcessPoolExecutor
+import numpy as np, torch
+from .data import load_subject, ROOT
+from .m9_temporal import N_CH, N_CLS, BURN, masks, inputs, kappa_acc
+
+DEFAULTS = dict(k=2, crop=125, epochs=20, batch=16, lr=3e-3, radius=0.9, ds=2, shuffle_labels=False, bias=0.0, gain=1.0, a_init="orth", center=False, loss="step", c_init="random")
+
+
+class Rec(torch.nn.Module):
+    def __init__(self, k, radius, seed, bias=False, a_init="orth"):
+        super().__init__(); H = N_CH * k; g = np.random.default_rng(seed); m = masks(k, bias); n_in = N_CH + int(bias)
+        q, _ = np.linalg.qr(g.normal(size=(H, H)))
+        if a_init == "diag": q = np.eye(H)
+        self.m = {n: torch.tensor(v, dtype=torch.float64) for n, v in m.items()}
+        self.A = torch.nn.Parameter(torch.tensor(radius * q))
+        self.B = torch.nn.Parameter(torch.tensor(g.normal(size=(H, n_in)) / np.sqrt(H)) * self.m["B"])
+        self.C = torch.nn.Parameter(torch.tensor(g.normal(size=(N_CLS, H)) / np.sqrt(H)))
+        self.H = H
+
+    def forward(self, u):  # u (b,T,22) -> y (b,T,4)
+        A, B = self.A * self.m["A"], self.B * self.m["B"]; h = torch.zeros(u.shape[0], self.H, dtype=u.dtype)
+        ys = []
+        for t in range(u.shape[1]):
+            h = torch.tanh(h) @ A.T + u[:, t] @ B.T; ys.append(torch.tanh(h) @ self.C.T)
+        return torch.stack(ys, 1)
+
+
+def one(subject, seed, opts):
+    o = {**DEFAULTS, **opts}; t0 = time.time(); torch.set_num_threads(2)
+    d = load_subject(subject)
+    Utr, ytr = torch.tensor(inputs(d["train"]["seg"], o["ds"], o["bias"], o["gain"])), d["train"]["y"].astype(int)
+    Uva, yva = torch.tensor(inputs(d["val"]["seg"], o["ds"], o["bias"], o["gain"])), d["val"]["y"].astype(int)
+    rng = np.random.default_rng(seed); ylearn = rng.permutation(ytr) if o["shuffle_labels"] else ytr
+    net = Rec(o["k"], o["radius"], seed, o["bias"] > 0, o["a_init"]); opt = torch.optim.Adam(net.parameters(), lr=o["lr"])
+    k0 = None
+    if o["c_init"] == "ridge":  # same closed-form reservoir readout as m9_temporal.ridge_readout
+        from sklearn.linear_model import RidgeCV
+        with torch.no_grad():
+            A, B = net.A * net.m["A"], net.B * net.m["B"]; h = torch.zeros(len(Utr), net.H, dtype=Utr.dtype); acc = 0
+            for t in range(Utr.shape[1]):
+                h = torch.tanh(h) @ A.T + Utr[:, t] @ B.T
+                if t >= BURN: acc = acc + torch.tanh(h)
+            F = (acc / (Utr.shape[1] - BURN)).numpy()
+        Y = np.full((len(ylearn), N_CLS), -0.25 if o["center"] else 0.0); Y[np.arange(len(ylearn)), ylearn] += 1.0
+        r = RidgeCV(alphas=np.logspace(-3, 3, 13), fit_intercept=False).fit(F, Y)
+        with torch.no_grad(): net.C.copy_(torch.tensor(r.coef_))
+    T, L = Utr.shape[1], o["crop"]; curve = []
+    pred = lambda U: net(U)[:, BURN:].mean(1).argmax(1).numpy()
+    if o["c_init"] == "ridge":
+        with torch.no_grad(): k0 = kappa_acc(yva, pred(Uva))[0]
+        print(f"[bptt s{subject} seed{seed}] epoch 0 ridge reservoir k_va={k0:.3f}", flush=True)
+    for ep in range(o["epochs"]):
+        order = rng.permutation(len(Utr))
+        for i in range(0, len(order), o["batch"]):
+            j = order[i:i + o["batch"]]; s = rng.integers(0, T - L + 1, len(j))
+            u = torch.stack([Utr[a, b:b + L] for a, b in zip(j, s)])
+            tgt = torch.full((len(j), L, N_CLS), -0.25 if o["center"] else 0.0, dtype=u.dtype)
+            tgt[np.arange(len(j)), :, ylearn[j]] += 1.0
+            out = net(u)
+            if o["loss"] == "mean": loss = 0.5 * ((out[:, BURN:].mean(1) - tgt[:, 0]) ** 2).mean()
+            else: loss = 0.5 * ((out - tgt) ** 2).mean()
+            opt.zero_grad(); loss.backward(); opt.step()
+        if (ep + 1) % 5 == 0 or ep == o["epochs"] - 1:
+            with torch.no_grad():
+                curve.append({"epoch": ep + 1, "kappa_train": kappa_acc(ytr, pred(Utr))[0],
+                              "kappa_val": kappa_acc(yva, pred(Uva))[0]})
+            print(f"[bptt s{subject} seed{seed}] {curve[-1]}", flush=True)
+    with torch.no_grad(): p = pred(Uva)
+    k, a = kappa_acc(yva, p)
+    return {"subject": subject, "seed": seed, "kappa_val": k, "acc_val": a, "settle_rate": 1.0, "kappa_val_epoch0": k0,
+            "curve": curve, "pred": p.tolist(), "y": yva.tolist(), "wall_s": time.time() - t0}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--arm", default="bptt_tpn"); ap.add_argument("--subjects", default="1")
+    ap.add_argument("--seeds", default="0"); ap.add_argument("--opts", default="{}")
+    ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--tag", default="")
+    a = ap.parse_args(); opts = json.loads(a.opts)
+    lo, _, hi = a.subjects.partition("-"); subs = list(range(int(lo), int(hi or lo) + 1))
+    seeds = [int(s) for s in a.seeds.split(",")]
+    commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
+    jobs = [(s, k) for s in subs for k in seeds]; t0 = time.time()
+    with ProcessPoolExecutor(a.jobs) as ex:
+        res = list(ex.map(one, *zip(*[(s, k, dict(opts)) for s, k in jobs])))
+    by_seed = [np.mean([r["kappa_val"] for r in res if r["seed"] == k]) for k in seeds]
+    summ = {"commit": commit, "stage": "M9", "arm": a.arm, "opts": {**DEFAULTS, **opts}, "subjects": subs,
+            "seeds": seeds, "kappa_val": float(np.mean([r["kappa_val"] for r in res])),
+            "kappa_seed_sd": float(np.std(by_seed)), "acc_val": float(np.mean([r["acc_val"] for r in res])),
+            "settle_rate": 1.0, "kappa_val_epoch0": (float(np.mean([r["kappa_val_epoch0"] for r in res]))
+                                                     if res[0]["kappa_val_epoch0"] is not None else None),
+            "per_subject_kappa": {s: float(np.mean([r["kappa_val"] for r in res if r["subject"] == s])) for s in subs},
+            "wall_s": time.time() - t0, "python": platform.python_version()}
+    out = ROOT / "receipts" / "M9" / a.arm / f"{commit}{a.tag}"; out.mkdir(parents=True, exist_ok=True)
+    (out / "runs.json").write_text(json.dumps(res)); (out / "summary.json").write_text(json.dumps(summ, indent=1))
+    print(json.dumps(summ, indent=1)); print(out / "summary.json")
+
+
+if __name__ == "__main__":
+    main()

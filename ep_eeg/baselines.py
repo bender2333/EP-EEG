@@ -1,132 +1,67 @@
-"""Baseline models for M0: LDA (Track 1/2), Shuffled labels, FBCSP, and EEGNet."""
-
+"""Group-4 baselines: same-input LDA, FBCSP, EEGNet (braindecode)."""
 from __future__ import annotations
-
-from typing import Any
 import numpy as np
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-import torch
-import torch.nn as nn
-from mne.decoding import CSP
-from braindecode.models import EEGNet
-
-from eval.dataset import load_subject_raw_trials, load_subject_split
-from eval.metrics import aggregate_trial_predictions, compute_metrics
-from eval.preprocessing import bandpass_filter
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as LDA
 
 
-def run_lda(
-    subject_id: int,
-    track: str = "track2",
-    shuffle_labels: bool = False,
-    seed: int = 0,
-) -> dict[str, Any]:
-    """Run LDA baseline on Track-1 or Track-2 subwindow features."""
-    data = load_subject_split(subject_id, track=track)  # type: ignore[arg-type]
-    X_train = data["X_train"].reshape(len(data["X_train"]), -1)
-    X_val = data["X_val"].reshape(len(data["X_val"]), -1)
-
-    y_train_trial = data["y_train_trial"]
-    if shuffle_labels:
-        rng = np.random.default_rng(seed)
-        y_train_trial = rng.permutation(y_train_trial)
-
-    y_train = np.repeat(y_train_trial, 11)
-
-    lda = LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")
-    lda.fit(X_train, y_train)
-
-    val_probs = lda.predict_proba(X_val)
-    trial_preds = aggregate_trial_predictions(val_probs, data["val_trial_ids"])
-
-    metrics = compute_metrics(data["y_val_trial"], trial_preds)
-    return {
-        "accuracy": metrics["accuracy"],
-        "kappa": metrics["kappa"],
-        "trial_preds": trial_preds.tolist(),
-        "y_true": data["y_val_trial"].tolist(),
-        "settle_rate": 1.0,
-    }
+def lda(train, val, seed, track="track2", shuffle=False):
+    X = train[track + "_x"]; y = train["y"]
+    if shuffle:
+        y = np.random.default_rng(seed).permutation(y)
+    n, k, d = X.shape
+    clf = LDA(solver="lsqr", shrinkage="auto").fit(X.reshape(-1, d), np.repeat(y, k))
+    Xv = val[track + "_x"]
+    p = clf.predict_proba(Xv.reshape(-1, d)).reshape(len(Xv), k, 4)
+    return p, np.ones(p.shape[:2], bool), {"params": int(clf.coef_.size + clf.intercept_.size)}
 
 
-def run_fbcsp(
-    subject_id: int,
-    seed: int = 0,
-    n_components: int = 4,
-) -> dict[str, Any]:
-    """Run Filter Bank Common Spatial Pattern (FBCSP) + shrinkage LDA baseline."""
-    np.random.seed(seed)
-    data = load_subject_raw_trials(subject_id)
-    X_train, y_train = data["X_train"], data["y_train"]
-    X_val, y_val = data["X_val"], data["y_val"]
-
-    bands = [(4, 8), (8, 12), (12, 16), (16, 20), (20, 24), (24, 28), (28, 32)]
-    tr_feats_list = []
-    val_feats_list = []
-
-    for low, high in bands:
-        X_tr_band = bandpass_filter(X_train, fs=250.0, low=low, high=high)
-        X_val_band = bandpass_filter(X_val, fs=250.0, low=low, high=high)
-        csp = CSP(n_components=n_components, log=True, rank="full")
-        tr_feats_list.append(csp.fit_transform(X_tr_band, y_train))
-        val_feats_list.append(csp.transform(X_val_band))
-
-    F_train = np.concatenate(tr_feats_list, axis=1)
-    F_val = np.concatenate(val_feats_list, axis=1)
-
-    lda = LinearDiscriminantAnalysis(solver="lsqr", shrinkage="auto")
-    lda.fit(F_train, y_train)
-    preds = lda.predict(F_val)
-
-    metrics = compute_metrics(y_val, preds)
-    return {
-        "accuracy": metrics["accuracy"],
-        "kappa": metrics["kappa"],
-        "trial_preds": preds.tolist(),
-        "y_true": y_val.tolist(),
-        "settle_rate": 1.0,
-    }
+def fbcsp(train, val, seed, n_feat=8):
+    from scipy.signal import butter, sosfiltfilt
+    from mne.decoding import CSP
+    from sklearn.feature_selection import SelectKBest, mutual_info_classif
+    bands = [(lo, lo + 4) for lo in range(4, 36, 4)]
+    def bank(seg, csps=None, y=None):
+        feats, fitted = [], []
+        for i, (lo, hi) in enumerate(bands):
+            sos = butter(4, [lo, min(hi, 124)], btype="band", fs=250, output="sos")
+            x = sosfiltfilt(sos, seg.astype(np.float64), axis=-1)
+            c = csps[i] if csps else CSP(n_components=4, log=True).fit(x, y)
+            fitted.append(c); feats.append(c.transform(x))
+        return np.hstack(feats), fitted
+    Ft, csps = bank(train["seg"], y=train["y"])
+    sel = SelectKBest(lambda X, y: mutual_info_classif(X, y, random_state=seed), k=n_feat).fit(Ft, train["y"])
+    clf = LDA().fit(sel.transform(Ft), train["y"])
+    Fv, _ = bank(val["seg"], csps)
+    p = clf.predict_proba(sel.transform(Fv))[:, None, :]
+    return p, np.ones(p.shape[:2], bool), {}
 
 
-def run_eegnet(
-    subject_id: int,
-    seed: int = 0,
-    epochs: int = 40,
-    lr: float = 1e-3,
-    weight_decay: float = 1e-4,
-) -> dict[str, Any]:
-    """Run Braindecode EEGNet baseline on continuous trial epochs."""
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-
-    data = load_subject_raw_trials(subject_id)
-    X_train = torch.from_numpy(data["X_train"])
-    y_train = torch.from_numpy(data["y_train"])
-    X_val = torch.from_numpy(data["X_val"])
-    y_val = data["y_val"]
-
-    model = EEGNet(n_chans=22, n_outputs=4, n_times=750)
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    criterion = nn.CrossEntropyLoss()
-
-    model.train()
+def eegnet(train, val, seed, epochs=300, lr=1e-3, batch=32):
+    import torch
+    from braindecode.models import EEGNet
+    torch.set_num_threads(2); torch.manual_seed(seed); np.random.seed(seed)
+    Xt = torch.tensor(train["seg"], dtype=torch.float32); yt = torch.tensor(train["y"])
+    m = EEGNet(n_chans=22, n_outputs=4, n_times=Xt.shape[-1])
+    opt = torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=0.0)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, epochs)
+    g = torch.Generator().manual_seed(seed)
     for _ in range(epochs):
-        optimizer.zero_grad()
-        logits = model(X_train)
-        loss = criterion(logits, y_train)
-        loss.backward()
-        optimizer.step()
-
-    model.eval()
+        m.train()
+        for idx in torch.randperm(len(Xt), generator=g).split(batch):
+            opt.zero_grad(); loss = torch.nn.functional.cross_entropy(m(Xt[idx]), yt[idx]); loss.backward(); opt.step()
+        sched.step()
+    m.eval()
     with torch.no_grad():
-        val_logits = model(X_val)
-        preds = val_logits.argmax(dim=-1).numpy()
+        p = torch.softmax(m(torch.tensor(val["seg"], dtype=torch.float32)), 1).numpy()[:, None, :]
+    return p, np.ones(p.shape[:2], bool), {"params": int(sum(q.numel() for q in m.parameters()))}
 
-    metrics = compute_metrics(y_val, preds)
-    return {
-        "accuracy": metrics["accuracy"],
-        "kappa": metrics["kappa"],
-        "trial_preds": preds.tolist(),
-        "y_true": y_val.tolist(),
-        "settle_rate": 1.0,
-    }
+
+def mlp(train, val, seed, hidden=64, track="track2", alpha=1e-3, max_iter=200):
+    """Same Track-2 input, parameter count near the EP sandbox (~4.5k)."""
+    from sklearn.neural_network import MLPClassifier
+    X = train[track + "_x"]; y = train["y"]; n, k, d = X.shape
+    clf = MLPClassifier(hidden_layer_sizes=(hidden,), alpha=alpha, max_iter=max_iter, random_state=seed,
+                        early_stopping=False).fit(X.reshape(-1, d), np.repeat(y, k))
+    Xv = val[track + "_x"]
+    p = clf.predict_proba(Xv.reshape(-1, d)).reshape(len(Xv), k, 4)
+    return p, np.ones(p.shape[:2], bool), {"params": int(sum(c.size for c in clf.coefs_) + sum(b.size for b in clf.intercepts_))}

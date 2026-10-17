@@ -3,7 +3,7 @@
   "protocol_version": 1,
   "readiness": "bootstrap_only",
   "cadence": {
-    "path": "C:/project/cadence",
+    "path": "/workspace/cadence",
     "commit": "6499e56"
   },
   "environment": {
