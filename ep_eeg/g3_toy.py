@@ -13,7 +13,8 @@ held-out sequences from a zero state. References (not criteria): linear ridge on
 untrained net + ridge readout, same structure trained by BPTT (torch).
 """
 from __future__ import annotations
-import argparse, json, subprocess, time
+import argparse, json, os, subprocess, time
+from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from scipy.signal import butter, filtfilt
@@ -79,8 +80,11 @@ def ep_run(task, variant, seed, eval_split="select", o=OPTS):
                                 "r2_eval": r2(predict(net, Uev), yev, win), "wall": time.time() - t0})
             print(f"[{task} {variant} s{seed}] {it + 1} r2_eval={st['curve'][-1]['r2_eval']:.3f} upd {st['updated']}/{st['attempted']} {time.time() - t0:.0f}s", flush=True)
     rad = float(np.abs(np.linalg.eigvals(net.parameters()["A"])).max())
-    return {"task": task, **variant, "seed": seed, "split": eval_split, "r2": r2(predict(net, Uev), yev, win),
-            "settle_rate": st["updated"] / max(1, st["attempted"]), "A_radius": rad, "train": st, "wall_s": time.time() - t0}
+    out = {"task": task, **variant, "seed": seed, "split": eval_split, "r2": r2(predict(net, Uev), yev, win),
+           "settle_rate": st["updated"] / max(1, st["attempted"]), "A_radius": rad, "train": st, "wall_s": time.time() - t0}
+    if os.environ.get("G3_RUN_DIR"):  # per-run receipt, so a container restart loses at most the runs in flight
+        Path(os.environ["G3_RUN_DIR"], f"{task}_{variant['a_init']}_{variant['opt']}_s{seed}_{eval_split}.json").write_text(json.dumps(out, default=float))
+    return out
 
 
 def references(task, seed=0, o=OPTS):
@@ -125,7 +129,7 @@ def _ref(t): return references(t)
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--phase", choices=("select", "final", "refs"), required=True)
-    ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--variant", default=None); ap.add_argument("--updates", type=int, default=None)
+    ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--variant", default=None); ap.add_argument("--updates", type=int, default=None); ap.add_argument("--seeds", default=None, help="json list of seed lists, one per variant")
     a = ap.parse_args(); o = {**OPTS, **({"updates": a.updates} if a.updates else {})}
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
     out = ROOT / "receipts" / "G3" / commit; out.mkdir(parents=True, exist_ok=True)
@@ -136,7 +140,8 @@ def main():
             res = list(ex.map(_ep, [(t, v, 0, "select") for t in ("full", "int", "sq") for v in VARIANTS]))
         else:  # reports/M10-gates.md deviation: list of variants, each on the test split with seeds 0-2
             vs = json.loads(a.variant); vs = vs if isinstance(vs, list) else [vs]
-            res = list(ex.map(_ep, [("full", v, s, "test") for v in vs for s in (0, 1, 2)]))
+            seeds = json.loads(a.seeds) if a.seeds else [[0, 1, 2]] * len(vs)
+            res = list(ex.map(_ep, [("full", v, s, "test") for v, ss in zip(vs, seeds) for s in ss]))
     (out / f"{a.phase}.json").write_text(json.dumps(res, indent=1, default=float)); print(out / f"{a.phase}.json")
     for r in res: print({k: (round(v, 3) if isinstance(v, float) else v) for k, v in r.items() if k not in ("train",)})
 
