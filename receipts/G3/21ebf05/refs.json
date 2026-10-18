@@ -1,0 +1,20 @@
+[
+ {
+  "task": "full",
+  "linear_lag_ridge": -0.009077002389457967,
+  "reservoir_ridge": 0.5075087248930341,
+  "bptt": 0.08072550467495054
+ },
+ {
+  "task": "int",
+  "linear_lag_ridge": 1.0,
+  "reservoir_ridge": 0.5122099867461323,
+  "bptt": 0.618304141127316
+ },
+ {
+  "task": "sq",
+  "linear_lag_ridge": -0.008263079959262676,
+  "reservoir_ridge": 0.9425512068924711,
+  "bptt": 0.9970201466663162
+ }
+]
