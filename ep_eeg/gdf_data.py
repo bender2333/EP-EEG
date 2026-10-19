@@ -42,7 +42,10 @@ def read_blocks(subject):
         ons, labs, rej = [], [], []
         for i, (s, c) in enumerate(inside):
             if c != "768": continue
-            nxt = [cc for _, cc in inside[i + 1:i + 4]]
+            nxt = []
+            for _, cc in inside[i + 1:]:  # this trial's events only: stop at the next trial start
+                if cc == "768": break
+                nxt.append(cc)
             ons.append(s); labs.append(next(CUES[cc] for cc in nxt if cc in CUES)); rej.append("1023" in nxt)
         if ons: out["mi"].append((eeg, eog, np.array(ons), np.array(labs), np.array(rej)))
     assert len(out["mi"]) == 6, (subject, len(out["mi"]))
