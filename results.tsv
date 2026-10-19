@@ -204,3 +204,4 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 53737b0	M12-S0	A2_torch64	NA	NA	NA	1	20	done	A2 torch64: 1400 configs, 0 false positives (full judgement in m12_verify)
 53737b0	M12-S0	A3_bench	NA	NA	NA	1	244	done	A3 throughput H=512 / 1760 / batch 64 on cpu64, torch64, torch32 (8x1, 2x4); GPU not available
 53737b0	M12-S0	G0	NA	NA	NA	3	586	pending	G0 = waiting for user: prechecks, A1, A2, A3-CPU all pass; GPU untested (no GPU); U = 40847 (torch32 2x4), U_min 9720
+1cc4870	M12-S0	G0	NA	NA	NA	3	586	pass	G0 = pass, GPU waived by user (2026-10-19 23:40 UTC); S3 U = 40847 (torch f32, 2x4)
