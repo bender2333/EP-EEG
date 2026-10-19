@@ -88,8 +88,8 @@ def ep_contrast(lr, D, y):
     return lr.contrast(free, plus, minus)
 
 
-def cell(seed, leak, budget, amp, nudge, valid_only=False):
-    prev = existing(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}")
+def cell(seed, leak, budget, amp, nudge, valid_only=False, write=True):
+    prev = existing(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}") if write else None
     if prev: return prev
     t0 = time.time(); lr, kind, conn = build(seed, leak, budget, nudge); D, y = batch(seed, amp, conn.n)
     idx, pcls = physical(lr, kind); free_idx = np.arange(NS, conn.n)
@@ -124,7 +124,7 @@ def cell(seed, leak, budget, amp, nudge, valid_only=False):
         except LearningPhaseError as err:
             res["grid"].append({"beta": beta, "tol": tol, "refused": err.phase})
     res["wall_s"] = time.time() - t0
-    write_receipt(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}", res)
+    if write: write_receipt(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}", res)
     return res
 
 
