@@ -276,12 +276,28 @@ def project(A, cap):
     r = float(np.abs(np.linalg.eigvals(A)).max()); return (A * (cap / r), True) if r > cap else (A, False)
 
 
-def train_ep(net, model, runs, seed, U, proj, gain, port, deadline, lr):
+def save_ckpt(path, net, adam, rng, st, it, elapsed):
+    """Everything train_ep carries between updates: parameters, Adam moments, crop rng, statistics, elapsed time."""
+    P = net.parameters(); arrays = {f"P_{k}": np.asarray(v) for k, v in P.items()}
+    arrays.update({f"m_{k}": np.asarray(v) for k, v in adam.m.items()}); arrays.update({f"v_{k}": np.asarray(v) for k, v in adam.v.items()})
+    meta = {"it": it, "elapsed": elapsed, "adam_t": adam.t, "rng": rng.bit_generator.state, "st": st}
+    path.parent.mkdir(parents=True, exist_ok=True); tmp = path.with_name(path.stem + ".tmp.npz")
+    np.savez(tmp, meta=np.array(json.dumps(meta)), **arrays); tmp.replace(path)
+
+
+def train_ep(net, model, runs, seed, U, proj, gain, port, deadline, lr, ckpt=None, ckpt_every=5):
+    """ckpt: checkpoint path; the run resumes from it after a container restart (same result as uninterrupted)."""
     from .m9_temporal import Adam
     rng = np.random.default_rng(seed + 100); adam = Adam(lr); zw = monitor_window(runs); t0 = time.time()
     st = {"attempted": 0, "updated": 0, "reasons": {}, "projections": 0, "rho_max": 0.0, "curve": [], "stopped": "U"}
-    every = max(1, U // 8)
-    for it in range(U):
+    every = max(1, U // 8); start = 0
+    if ckpt is not None and ckpt.exists():
+        z = np.load(ckpt); meta = json.loads(str(z["meta"]))
+        net.set_parameters({k[2:]: z[k] for k in z.files if k.startswith("P_")})
+        adam.t = meta["adam_t"]; adam.m = {k[2:]: z[k] for k in z.files if k.startswith("m_")}; adam.v = {k[2:]: z[k] for k in z.files if k.startswith("v_")}
+        rng.bit_generator.state = meta["rng"]; st = meta["st"]; start = meta["it"] + 1; t0 = time.time() - meta["elapsed"]
+        st.setdefault("resumed", []).append({"at_update": start, "elapsed_s": meta["elapsed"]})
+    for it in range(start, U):
         if time.time() - t0 > deadline: st["stopped"] = "budget"; break
         zs, tgt = crops(runs, rng, OPT["batch"]); u = np.stack([encode(z, gain, port) for z in zs])
         free = net.imagine(u, state=np.zeros((len(u), H))).output; tgt = tgt.copy(); tgt[:, :BURN] = free[:, :BURN]
@@ -295,6 +311,7 @@ def train_ep(net, model, runs, seed, U, proj, gain, port, deadline, lr):
         st["rho_max"] = max(st["rho_max"], float(np.abs(np.linalg.eigvals(net.parameters()["A"])).max()))
         if (it + 1) % every == 0:
             model.P = params(net); st["curve"].append({"update": it + 1, "mon_r2": mon_r2(model, zw), "wall": time.time() - t0})
+        if ckpt is not None and (it + 1) % ckpt_every == 0: save_ckpt(ckpt, net, adam, rng, st, it, time.time() - t0)
     model.P = params(net); st["train_wall_s"] = time.time() - t0
     st["accept_rate"] = st["updated"] / max(1, st["attempted"]); return st
 
@@ -349,34 +366,37 @@ def varp_score(subject, p):
 LRS = (1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3)
 
 
-def lr_score(subject, lr):
+def lr_score(subject, lr, gain=None, U=None):
     """Amendment M2-1: BPTT from C_res on runs 0-2 crops, min(U, 200) updates, h=1 R^2 on run 3 (seed 0)."""
-    s = settings(); gain, port = s["gain"], s["port"]; runs = data(subject)["runs"]
+    s = settings(); gain, port = gain or s["gain"], s["port"]; runs = data(subject)["runs"]; U = U or s["U"]
     base = Net(params(new_net(0, port)), gain, port).fit_readout(runs[:3])
-    m, st = train_bptt(base.P, runs, 0, min(s["U"], 200), False, gain, port, False, 1e9, lr, n_tr=3, monitor=False)
+    m, st = train_bptt(base.P, runs, 0, min(U, 200), False, gain, port, False, 1e9, lr, n_tr=3, monitor=False)
     z, ok = runs[3][0], runs[3][1]; S = m.run_states(z); t = usable_pairs(ok, 0, 1); y = m.predict(S[t]); tt = z[:, t + 1].T
     with np.errstate(all="ignore"): r = float(np.mean(1 - ((y - tt) ** 2).sum(0) / ((tt - tt.mean(0)) ** 2).sum(0)))
     return r if np.isfinite(r) else -np.inf
 
 
-def timing_job(subject):
-    s = settings(); gain, port = s["gain"], s["port"]; runs = data(subject)["runs"]
+def timing_job(subject, gain=None):
+    s = settings(); gain, port = gain or s["gain"], s["port"]; runs = data(subject)["runs"]
     net = new_net(0, port); m = Net(params(net), gain, port).fit_readout(runs[:4]); P = net.parameters(); P["C"] = m.P["C"]; net.set_parameters(P)
     from .m9_temporal import Adam
-    rng = np.random.default_rng(100); adam = Adam(0.003); ts = []  # timing only
+    rng = np.random.default_rng(100); adam = Adam(0.003); ts, reasons = [], []  # timing only
     for _ in range(20):
         t0 = time.time(); zs, tgt = crops(runs, rng, OPT["batch"]); u = np.stack([encode(z, gain, port) for z in zs])
         free = net.imagine(u, state=np.zeros((len(u), H))).output; tgt[:, :BURN] = free[:, :BURN]
         net.reset(); r = net.observe(u, tgt, beta=OPT["beta"], rate=0.0)
         if r.updated: adam.step(net, r.delta)
-        ts.append(time.time() - t0)
-    return {"subject": subject, "per_update_s": ts}
+        ts.append(time.time() - t0); reasons.append(r.reason)
+    return {"subject": subject, "gain": gain, "per_update_s": ts, "reasons": reasons}
 
 
 # ---------------- main runs ----------------
 def run_arm(arm, subject, seed):
     t0 = time.time(); s = settings(); gain, port, U = s.get("gain", 3.0), s.get("port", 5.0), s.get("U")
-    budget, crash = s.get("budget_s", OPT["budget_s"]), s.get("crash_s", OPT["crash_s"])
+    budget, crash, lr = s.get("budget_s", OPT["budget_s"]), s.get("crash_s", OPT["crash_s"]), s.get("lr")
+    name = arm
+    if arm.endswith("_g3"):  # amendment M4: the same arm at gain 3 (port unchanged), with its own timing, U and lr
+        g = s["g3"]; gain, U, budget, crash, lr, arm = 3.0, g.get("U"), g.get("budget_s"), g.get("crash_s"), g.get("lr"), arm[:-3]
     D = data(subject); runs = D["runs"]; info = {}; model = None
     try:
         if arm in ("var6", "var_best"):
@@ -386,25 +406,28 @@ def run_arm(arm, subject, seed):
         elif arm.startswith("ep_"):
             net = new_net(seed, port); model = Net(params(net), gain, port).fit_readout(runs[:4])
             P = net.parameters(); P["C"] = model.P["C"]; net.set_parameters(P)
-            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, budget, s["lr"])
+            ck = OUT / "ckpt" / name / f"A{subject:02d}_s{seed}.npz"
+            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, budget, lr, ckpt=ck)
+            t0 -= sum(r["elapsed_s"] for r in info["train"].get("resumed", [])[-1:])  # wall clock counts the time before a restart
         else:  # bptt_{noproj,proj}_{U,2000}, lin_bptt_2000
             parts = arm.split("_"); linear = arm.startswith("lin_"); n_upd = U if parts[-1] == "U" else int(parts[-1])
             base = Net(params(new_net(seed, port)), gain, port, linear=linear).fit_readout(runs[:4])
             model, info["train"] = train_bptt(base.P, runs, seed, n_upd, "proj" in parts, gain, port, linear,
-                                               budget if parts[-1] == "U" else 4 * OPT["budget_s"], s["lr"])
+                                               budget if parts[-1] == "U" else 4 * OPT["budget_s"], lr)
         if time.time() - t0 > crash and not arm.endswith("2000"): raise TimeoutError(f"over {crash:.0f} s")
         res = evaluate(model, runs, subject, seed)
     except Exception as e:  # amendment M1-6: a crash is a loss, flagged
         res = {"R2_15": -np.inf, "D_gen": np.inf, "flags": [f"crashed: {type(e).__name__}: {e}"]}
     A = model.P.get("A") if isinstance(model, Net) else None
-    rec = {"stage": "M11", "step": "C", "arm": arm, "subject": subject, "seed": seed, **res, **info,
+    rec = {"stage": "M11", "step": "C", "arm": name, "subject": subject, "seed": seed, "gain": gain, **res, **info,
            "n_params": getattr(model, "n_params", None),
            "A_radius_final": float(np.abs(np.linalg.eigvals(A)).max()) if A is not None else None,
            "settings": s, "gdf_sha256": D["sha256"], "n_rejected_trials": D["n_rejected"], "calib_blocks": D["calib_blocks"],
            "settle_rate": info.get("train", {}).get("accept_rate", 1.0), "rejected": info.get("train", {}).get("attempted", 0) - info.get("train", {}).get("updated", 0),
            "wall_s": time.time() - t0}
-    write_receipt(OUT / "runs" / arm, f"A{subject:02d}_s{seed}", rec, subject=subject, kind="gdf")
-    return {"arm": arm, "subject": subject, "seed": seed, "R2_15": rec["R2_15"], "D_gen": rec["D_gen"], "flags": rec["flags"], "wall_s": rec["wall_s"]}
+    write_receipt(OUT / "runs" / name, f"A{subject:02d}_s{seed}", rec, subject=subject, kind="gdf")
+    (OUT / "ckpt" / name / f"A{subject:02d}_s{seed}.npz").unlink(missing_ok=True)
+    return {"arm": name, "subject": subject, "seed": seed, "R2_15": rec["R2_15"], "D_gen": rec["D_gen"], "flags": rec["flags"], "wall_s": rec["wall_s"]}
 
 
 # ---------------- E3 (metric positive control, closed form) ----------------
@@ -438,7 +461,7 @@ def _e3(a): return e3_job(*a)
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--phase", required=True, choices=("integrity", "select", "timing", "lrsel", "main", "e3"))
+    ap = argparse.ArgumentParser(); ap.add_argument("--phase", required=True, choices=("integrity", "select", "timing", "lrsel", "timing_g3", "lrsel_g3", "main", "e3"))
     ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--arms", default=None); ap.add_argument("--subjects", default="1-9")
     ap.add_argument("--seeds", default="0,1,2"); a = ap.parse_args(); OUT.mkdir(parents=True, exist_ok=True)
     lo, hi = map(int, a.subjects.split("-")); subs = range(lo, hi + 1); seeds = list(map(int, a.seeds.split(",")))
@@ -465,6 +488,21 @@ def main():
             (OUT / "settings.json").write_text(json.dumps(st, indent=1)); write_receipt(OUT, "timing", {"per_process": res, "t_bar_s": tbar, "U": U, "U_at_7200s": U0,
                                                                                                     "budget_s": budget, "crash_s": crash})
             print("t_bar", tbar, "U", U, "budget", budget)
+        elif a.phase == "timing_g3":  # amendment M4: same timing rule (M1-6, M3-4) at gain 3
+            res = list(ex.map(timing_job, (1, 2, 3, 4), (3.0,) * 4)); tbar = float(np.mean([np.mean(r["per_update_s"]) for r in res]))
+            budget, crash = OPT["budget_s"], OPT["crash_s"]; U0 = int(min(400, np.floor(budget / tbar)))
+            if U0 < 200: budget, crash = 2 * budget, 2 * crash
+            U = int(min(400, np.floor(budget / tbar))); g = {**settings().get("g3", {}), "U": U, "t_bar_s": tbar, "U_at_7200s": U0, "budget_s": budget,
+                                                               "crash_s": crash, "low_power": U < 200}
+            (OUT / "settings.json").write_text(json.dumps({**settings(), "g3": g}, indent=1)); write_receipt(OUT, "timing_g3", {"per_process": res, **g})
+            print("g3 t_bar", tbar, "U", U, "budget", budget)
+        elif a.phase == "lrsel_g3":
+            U3 = settings()["g3"]["U"]; jobs = [(s_, lr) for lr in LRS for s_ in subs]
+            sc = list(ex.map(lr_score, [j[0] for j in jobs], [j[1] for j in jobs], [3.0] * len(jobs), [U3] * len(jobs)))
+            table = {str(lr): float(np.mean([v for (s_, l), v in zip(jobs, sc) if l == lr])) for lr in LRS}
+            best = max(LRS, key=lambda lr: table[str(lr)]); st = settings(); st["g3"] = {**st["g3"], "lr": best}
+            (OUT / "settings.json").write_text(json.dumps(st, indent=1))
+            write_receipt(OUT, "lrsel_g3", {"r2_h1_run3": table, "per_job": [list(j) + [v] for j, v in zip(jobs, sc)], "chosen_lr": best}); print(table, best)
         elif a.phase == "lrsel":
             jobs = [(s_, lr) for lr in LRS for s_ in subs]; sc = list(ex.map(_lr, jobs))
             table = {str(lr): float(np.mean([v for (s_, l), v in zip(jobs, sc) if l == lr])) for lr in LRS}
