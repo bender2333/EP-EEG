@@ -66,7 +66,7 @@
 5. **先记账，再取舍**：向 `results.tsv` 追加一行，列为 `commit  stage  arm  kappa_val  acc_val  settle_rate  seeds  wall_s  status  description`，status 取 keep、discard 或 crash。
 6. **取舍**：如果验证 κ 的提升超过种子间的标准差，或者指标持平但代码更少，就保留（keep）；否则用 `git reset --hard` 回到上一个 keep。
 
-**台账**指 `results.tsv`，它不纳入 git 跟踪，以免被 reset 清掉。预算档位分两档：**快速档**用于筛选；**完整档**是 9 名被试 × 3 个种子，用于确认是否保留。两档的具体数值在 M0/M1 实测后写入「环境」一节。
+**台账**指 `results.tsv`。M11 起它纳入 git 跟踪（人在 2026-10-19 的 M11 指令中决定；此前不跟踪）。为了不让 reset 清掉台账，第 6 步的回退只针对代码路径（`git checkout <keep> -- <路径>`），不回退台账。预算档位分两档：**快速档**用于筛选；**完整档**是 9 名被试 × 3 个种子，用于确认是否保留。两档的具体数值在 M0/M1 实测后写入「环境」一节。
 
 ## 阶段与阶段门
 
@@ -119,7 +119,7 @@
 
 ## 环境
 
-- 运行平台：Linux（本机实测：8 CPU、约 15 GB RAM、无 NVIDIA GPU）。Windows 不是必需。
+- 运行平台：Linux（本机实测：8 CPU、约 15 GB RAM、无 NVIDIA GPU；2026-10-18 起容器重启后为 4 CPU，M10 门槛和 M11 的耗时都按 4 核计）。Windows 不是必需。
 - Python：用 uv 建 3.12 虚拟环境。已实测 Python 3.12.15。
 - 已安装并导入验证：cadence-net 0.83.0（editable，commit `6499e56`，路径 `/workspace/cadence`）、MOABB 1.7.2、Braindecode 1.8.1、scikit-learn 1.9.1、torch 2.14.1（CPU）、numba 0.68.0、mne 1.13.2。
 - 安装命令（实测）：
