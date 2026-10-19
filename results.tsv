@@ -171,3 +171,9 @@ fe07023	G10	g3_select_interim	NA	NA	NA	1	13500	crash	G3 select killed by choice 
 0807b01	G10	g3_final_orth_adam	0.7253	NA	0.80	3	18882	discard	G3 PRE-REGISTERED (deviation disclosed): orth-adam test R2 0.792/0.613/0.771 mean 0.725 < 0.8 -> G3 FAILS; accept 0.94/0.60/0.86, A spectral radius grew to 1.15-1.43; still > reservoir+ridge 0.508 and BPTT 0.081
 0807b01	G10	g3_final_orth_sgd	0.2170	NA	0.96	3	15577	discard	G3 report-only: orth-sgd test R2 -0.050/0.361/0.340 mean 0.217; peaks 0.55-0.67 mid-training then collapse
 dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, before any EP-vs-IFT comparison): implicit gradient vs central differences at 1e-11, 72/72 cells (3 seeds x leak x budget x amp x nudge) cos >= 0.99999 in every parameter class; hidden saturation 0-0.25
+068c27c	M11	A_mdm	0.3827	0.5370	1.0000	3	86	keep	A pyRiemann MDM (oas, riemann), frozen protocol; MOABB within-session 0.488 -> gap 0.105 -> flagged 欠训 by rule (deterministic pipeline: gap reflects protocol, see M11.md)
+068c27c	M11	A_tslr	0.5123	0.6343	1.0000	3	17	keep	A TS+LR (oas, riemann, C=1); MOABB 0.626 -> gap 0.114 -> flagged 欠训 by rule
+068c27c	M11	A_eegnet_moabb	0.3534	0.5150	1.0000	3	3028	keep	A braindecode EEGNet with MOABB Keras_EEGNet_8_2 config (128 Hz, Adam 1e-3, <=300 ep, ES 75 on 20% inner hold-out); MOABB 0.473 -> gap 0.120 -> 欠训; M0 EEGNet 0.401
+068c27c	M11	A_eegnet_bd	0.0041	0.2531	1.0000	3	764	keep	A braindecode EEGNet, braindecode BCIC-2a trialwise training config (AdamW 6.25e-4, 100 ep, ES 10 load_best on 38 hold-out trials): val loss never leaves ln4, stops ~ep 29 -> chance; 欠训
+068c27c	M11	A_mdm_moabbpp	0.4090	0.5567	1.0000	3	52	keep	A diagnostic: MDM with MOABB default preprocessing (8-32 Hz, cue+0..4 s, no EOG regression), T only
+068c27c	M11	A_tslr_moabbpp	0.5170	0.6377	1.0000	3	49	keep	A diagnostic: TS+LR with MOABB default preprocessing
