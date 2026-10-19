@@ -169,7 +169,7 @@ def step_d2(commit):
     for st in ("recip", "lateral", "recip_lat"):
         for tr in ("ep", "ift", "delta"):
             rs = load(f"D2/{commit}/{st}_{tr}/*.json")
-            if rs: complete(rs, f"D2/{st}_{tr}", seeds=(3, 4, 5)); recs[(st, tr)] = {(r["subject"], r["seed"]): r for r in rs}
+            if rs and complete(rs, f"D2/{st}_{tr}", seeds=(3, 4, 5)): recs[(st, tr)] = {(r["subject"], r["seed"]): r for r in rs}
     for st in ("recip", "lateral", "recip_lat"):
         if (st, "ep") not in recs: continue
         E = recs[(st, "ep")]; o = {}
@@ -264,19 +264,54 @@ def step_c():
             if a not in A: continue
             rs = list(A[a].values()); acc = [r.get("train", {}).get("accept_rate", 0) for r in rs]
             coll = [bool(r.get("train", {}).get("curve")) and (r["train"]["curve"][-1]["mon_r2"] < max(c["mon_r2"] for c in r["train"]["curve"]) - 0.05) for r in rs]
-            st[a] = {"accept_ge_0.98": int(sum(x >= 0.98 for x in acc)), "collapsed": int(sum(coll)), "rho_max": float(max(r.get("train", {}).get("rho_max", 0) for r in rs)), "n": len(rs)}
+            st[a] = {"accept_ge_0.98": int(sum(x >= 0.98 for x in acc)), "collapsed": int(sum(coll)), "rho_max": float(max(r.get("train", {}).get("rho_max", 0) for r in rs)), "n": len(rs),
+                     "violating": int(sum((x < 0.98) or c for x, c in zip(acc, coll)))}
         if {"ep_noproj", "ep_proj"} <= set(st):
             p, n = st["ep_proj"], st["ep_noproj"]
-            st["projection_solves"] = bool(p["accept_ge_0.98"] >= 25 and p["n"] - p["collapsed"] >= 25 and (n["n"] - n["accept_ge_0.98"] + n["collapsed"]) >= 3)
-            st["noproj_already_stable"] = bool((n["n"] - n["accept_ge_0.98"] + n["collapsed"]) < 3)
+            st["projection_solves"] = bool(p["accept_ge_0.98"] >= 25 and p["n"] - p["collapsed"] >= 25 and n["violating"] >= 3)
+            st["noproj_already_stable"] = bool(n["violating"] < 3)
         out["stability"] = st
+    return out
+
+
+def step_e3():
+    """Amendment M1-14: on (a) VAR(6)-generated data VAR(6) must win on >= 7/9 subjects, on (b) C_res-generated data the reservoir."""
+    rs = load("C/e3/*.json")
+    if not rs: return {}
+    complete(rs, "E3"); out = {}
+    for teacher, winner, loser in (("a_var6", "var6", "res"), ("b_res", "res", "var6")):
+        W = {(r["subject"], r["seed"]): r[teacher][winner] for r in rs}; L = {(r["subject"], r["seed"]): r[teacher][loser] for r in rs}
+        w = wins(W, [L]); out[teacher] = {"expected_winner": winner, "wins": int(sum(w)), "per_subject": w, "holds": sum(w) >= 7,
+                                          f"R2_15_{winner}": float(np.mean([v["R2_15"] for v in W.values()])), f"R2_15_{loser}": float(np.mean([v["R2_15"] for v in L.values()])),
+                                          f"D_gen_{winner}": float(np.median([v["D_gen"] for v in W.values()])), f"D_gen_{loser}": float(np.median([v["D_gen"] for v in L.values()]))}
+    out["metric_discriminates"] = bool(out["a_var6"]["holds"] and out["b_res"]["holds"]); return out
+
+
+def step_c0():
+    """§5.4 C0 with amendment M1-10: EP + projection on the G3 toy (test split, 2000 updates), references under the same cap."""
+    rs = load("C0/runs/full_orth_adam_proj*_s*_test.json"); refs = load("C0/c0refs.json")
+    if not rs: return {}
+    out = {}
+    for cap in (0.95, 0.99):
+        ep = [r for r in rs if abs(r["proj"] - cap) < 1e-12]
+        if sorted(r["seed"] for r in ep) != [0, 1, 2]: problems.append(f"C0 cap {cap}: seeds {sorted(r['seed'] for r in ep)}"); continue
+        rf = [x for x in (refs[0] if refs else []) if abs(x["cap"] - cap) < 1e-12]
+        o = {"ep_r2_mean": float(np.mean([r["r2"] for r in ep])), "ep_accept_mean": float(np.mean([r["settle_rate"] for r in ep])),
+             "ep_accept_min": float(min(r["settle_rate"] for r in ep)), "ep_A_radius": [r["A_radius"] for r in ep], "ep_wall_s": [r["wall_s"] for r in ep]}
+        if len(rf) == 3:
+            o["bptt_proj_r2_mean"] = float(np.mean([x["bptt_proj"]["r2"] if isinstance(x["bptt_proj"], dict) else x["bptt_proj"] for x in rf]))
+            o["reservoir_r2_mean"] = float(np.mean([x["reservoir_ridge"] for x in rf]))
+        ep_ok = o["ep_r2_mean"] >= 0.8 and o["ep_accept_mean"] >= 0.95
+        o["verdict"] = ("solved within the cadence temporal module" if ep_ok else
+                        "cap too tight" if o.get("bptt_proj_r2_mean", 1.0) < 0.8 else "EP did not reach it under the same constraint")
+        out[str(cap)] = o
     return out
 
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--commit", required=True, help="queue commit of steps A, B, D, E")
     a = ap.parse_args(); res = {"A": step_a(a.commit), "B": step_b(a.commit), "D1": step_d1(a.commit), "D2": step_d2(a.commit),
-                                "E": step_e(a.commit), "C": step_c(), "problems": problems}
+                                "E": step_e(a.commit), "E3": step_e3(), "C": step_c(), "C0": step_c0(), "problems": problems}
     (ROOT / "reports" / "M11_verify.json").write_text(json.dumps(res, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o)))
     for k, v in res.items():
         if k != "problems": print(f"== {k}\n" + json.dumps(v.get("verdict", v) if isinstance(v, dict) else v, default=str)[:1500])
