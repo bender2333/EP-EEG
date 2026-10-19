@@ -195,3 +195,7 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 3d64b7f	M11	D2_recip_lat	0.3061	0.4796	1.0000	3	2975	keep	D2 recip_lat EP: kappa 0.306 = IFT 0.306 (CI [-0.0020, 0.0020]); delta 0.308; D2b(i) holds; D2b(ii) passes literally but delta-IFT is only 0.0015 (no-feedback rule also inside the 0.03 tolerance) -> exploratory caveat
 3d64b7f	M11	D2_lateral	0.3760	0.5320	1.0000	3	2734	keep	D2 lateral EP 0.376 vs IFT 0.377 vs delta 0.377, all ~0.025 above ridge; no row-sum projections (recip structures hit the 1.8 row-mass cap ~150k times) - exploratory
 3d64b7f	M11	D2_verdict	NA	NA	1.0000	3	19837	keep	Q3 task level: D1 holds + D2b holds -> 'EP credit assignment effective in non-degenerate structures' (cadence beta 0.04, tol 3e-3); caveat: delta (no feedback) is within 0.003 of IFT, so D2 cannot separate gradient from no-feedback rule; the evidence is D1
+53737b0	M12-S0	precheck_regression_ref	NA	NA	NA	3	5	done	N12 reference: M11 D1 leak=1.0 36 cells rerun on unmodified cadence c414c85 (worktree)
+53737b0	M12-S0	precheck_regression	NA	NA	NA	3	0	pass	N12 regression: 36/36 cells pass (fork sigmoid == c414c85, evenodd(1,0) == sigmoid, <= 1e-12)
+53737b0	M12-S0	precheck_unit	NA	NA	NA	1	4	pass	N2 activation unit tests: 23 passed in 2.16s; L grid check 9/9
+53737b0	M12-S0	D1_valid	NA	NA	NA	3	8	done	S0 D1 part valid: 144 receipts (std 72 + hetero 36 + tied 36 cells)
