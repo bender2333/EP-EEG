@@ -1,0 +1,30 @@
+{
+ "env": {
+  "commit": "3d64b7f0d80cdc4d3a72ddcd5b3330104dbf4086",
+  "dirty": false,
+  "cadence_commit": "8dc92d8fb8fa86afcb86b57dd199f26f2e7aed59",
+  "cadence_dirty": false,
+  "python": "3.12.3",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "scikit-learn": "1.9.1",
+   "torch": "2.14.1",
+   "mne": "1.13.2",
+   "moabb": "1.7.2",
+   "braindecode": "1.8.1",
+   "pyriemann": "0.12",
+   "cadence-net": "0.84.3",
+   "numba": "0.68.0"
+  },
+  "host_cpus": 4
+ },
+ "written": "2026-10-19T10:10:28",
+ "pick": 0.2,
+ "truth_oracle_inner": {
+  "0.1": 0.31790123456790126,
+  "0.2": 0.6419753086419753,
+  "0.3": 0.882716049382716,
+  "0.5": 1.0
+ }
+}
