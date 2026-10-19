@@ -376,6 +376,7 @@ def timing_job(subject):
 # ---------------- main runs ----------------
 def run_arm(arm, subject, seed):
     t0 = time.time(); s = settings(); gain, port, U = s.get("gain", 3.0), s.get("port", 5.0), s.get("U")
+    budget, crash = s.get("budget_s", OPT["budget_s"]), s.get("crash_s", OPT["crash_s"])
     D = data(subject); runs = D["runs"]; info = {}; model = None
     try:
         if arm in ("var6", "var_best"):
@@ -385,13 +386,13 @@ def run_arm(arm, subject, seed):
         elif arm.startswith("ep_"):
             net = new_net(seed, port); model = Net(params(net), gain, port).fit_readout(runs[:4])
             P = net.parameters(); P["C"] = model.P["C"]; net.set_parameters(P)
-            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, OPT["budget_s"], s["lr"])
+            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, budget, s["lr"])
         else:  # bptt_{noproj,proj}_{U,2000}, lin_bptt_2000
             parts = arm.split("_"); linear = arm.startswith("lin_"); n_upd = U if parts[-1] == "U" else int(parts[-1])
             base = Net(params(new_net(seed, port)), gain, port, linear=linear).fit_readout(runs[:4])
             model, info["train"] = train_bptt(base.P, runs, seed, n_upd, "proj" in parts, gain, port, linear,
-                                               OPT["budget_s"] if parts[-1] == "U" else 4 * OPT["budget_s"], s["lr"])
-        if time.time() - t0 > OPT["crash_s"] and not arm.endswith("2000"): raise TimeoutError("over 14400 s")
+                                               budget if parts[-1] == "U" else 4 * OPT["budget_s"], s["lr"])
+        if time.time() - t0 > crash and not arm.endswith("2000"): raise TimeoutError(f"over {crash:.0f} s")
         res = evaluate(model, runs, subject, seed)
     except Exception as e:  # amendment M1-6: a crash is a loss, flagged
         res = {"R2_15": -np.inf, "D_gen": np.inf, "flags": [f"crashed: {type(e).__name__}: {e}"]}
@@ -456,9 +457,14 @@ def main():
             write_receipt(OUT, "select", {"encode_r2_h1_run3": table, "var_r2_h1_run3": vt, "chosen": st}); print(table, vt, st)
         elif a.phase == "timing":
             res = list(ex.map(timing_job, (1, 2, 3, 4))); tbar = float(np.mean([np.mean(r["per_update_s"]) for r in res]))
-            U = int(min(400, np.floor(OPT["budget_s"] / tbar))); st = {**settings(), "U": U, "t_bar_s": tbar}
-            (OUT / "settings.json").write_text(json.dumps(st, indent=1)); write_receipt(OUT, "timing", {"per_process": res, "t_bar_s": tbar, "U": U})
-            print("t_bar", tbar, "U", U)
+            # amendment M3-4 (human decision): if U < 200 at 7200 s, the EP run budget is 14,400 s (crash 28,800 s)
+            budget, crash = OPT["budget_s"], OPT["crash_s"]; U0 = int(min(400, np.floor(budget / tbar)))
+            if U0 < 200: budget, crash = 2 * budget, 2 * crash
+            U = int(min(400, np.floor(budget / tbar))); st = {**settings(), "U": U, "t_bar_s": tbar, "U_at_7200s": U0, "budget_s": budget, "crash_s": crash,
+                                                               "low_power": U < 200}
+            (OUT / "settings.json").write_text(json.dumps(st, indent=1)); write_receipt(OUT, "timing", {"per_process": res, "t_bar_s": tbar, "U": U, "U_at_7200s": U0,
+                                                                                                    "budget_s": budget, "crash_s": crash})
+            print("t_bar", tbar, "U", U, "budget", budget)
         elif a.phase == "lrsel":
             jobs = [(s_, lr) for lr in LRS for s_ in subs]; sc = list(ex.map(_lr, jobs))
             table = {str(lr): float(np.mean([v for (s_, l), v in zip(jobs, sc) if l == lr])) for lr in LRS}

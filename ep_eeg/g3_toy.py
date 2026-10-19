@@ -61,6 +61,9 @@ class Adam:
 
 
 def ep_run(task, variant, seed, eval_split="select", o=OPTS):
+    tag = f"_proj{variant['proj']}" if variant.get("proj") else ""
+    rec = Path(os.environ.get("G3_RUN_DIR", "/nonexistent"), f"{task}_{variant['a_init']}_{variant['opt']}{tag}_s{seed}_{eval_split}.json")
+    if rec.exists(): return json.loads(rec.read_text())  # M11 C0: resume after a container restart
     t0 = time.time(); Utr, ytr, win = make(task, SPLITS["train"][0], SPLITS["train"][1])
     Uev, yev, _ = make(task, SPLITS[eval_split][0], SPLITS[eval_split][1])
     net = TemporalPatchNet(2, o["H"], 1, seed=seed, initial_radius=o["radius"])
@@ -87,8 +90,8 @@ def ep_run(task, variant, seed, eval_split="select", o=OPTS):
     out = {"task": task, **variant, "seed": seed, "split": eval_split, "r2": r2(predict(net, Uev), yev, win),
            "settle_rate": st["updated"] / max(1, st["attempted"]), "A_radius": rad, "train": st, "wall_s": time.time() - t0}
     if os.environ.get("G3_RUN_DIR"):  # per-run receipt, so a container restart loses at most the runs in flight
-        tag = f"_proj{variant['proj']}" if variant.get("proj") else ""
-        Path(os.environ["G3_RUN_DIR"], f"{task}_{variant['a_init']}_{variant['opt']}{tag}_s{seed}_{eval_split}.json").write_text(json.dumps(out, default=float))
+        out["env_cadence"] = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd="/workspace/cadence", text=True).strip()
+        tmp = rec.with_suffix(".tmp"); tmp.write_text(json.dumps(out, default=float)); tmp.replace(rec)
     return out
 
 
@@ -155,7 +158,7 @@ def main():
     ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--variant", default=None); ap.add_argument("--updates", type=int, default=None); ap.add_argument("--seeds", default=None, help="json list of seed lists, one per variant")
     a = ap.parse_args(); o = {**OPTS, **({"updates": a.updates} if a.updates else {})}
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
-    out = ROOT / "receipts" / "G3" / commit; out.mkdir(parents=True, exist_ok=True)
+    out = Path(os.environ["G3_OUT"]) if os.environ.get("G3_OUT") else ROOT / "receipts" / "G3" / commit; out.mkdir(parents=True, exist_ok=True)
     with ProcessPoolExecutor(a.jobs) as ex:
         if a.phase == "refs":
             res = list(ex.map(_ref, ("full", "int", "sq")))
