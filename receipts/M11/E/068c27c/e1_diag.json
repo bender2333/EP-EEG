@@ -1,0 +1,184 @@
+{
+ "env": {
+  "commit": "0dbb89fab9fa3c33e2da9c55add30b6b9c3a6fef",
+  "dirty": false,
+  "cadence_commit": "8dc92d8fb8fa86afcb86b57dd199f26f2e7aed59",
+  "cadence_dirty": false,
+  "python": "3.12.3",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "scikit-learn": "1.9.1",
+   "torch": "2.14.1",
+   "mne": "1.13.2",
+   "moabb": "1.7.2",
+   "braindecode": "1.8.1",
+   "pyriemann": "0.12",
+   "cadence-net": "0.84.3",
+   "numba": "0.68.0"
+  },
+  "host_cpus": 4
+ },
+ "written": "2026-10-19T10:25:35",
+ "exploratory": true,
+ "e": 0.2,
+ "seed": 0,
+ "per_subject": [
+  {
+   "subject": 1,
+   "mix": "narrow",
+   "fbcsp": 0.125,
+   "fbcsp_lw": 0.125,
+   "lead_logvar_sLDA": 0.45833333333333337,
+   "wall_s": 18.756006717681885
+  },
+  {
+   "subject": 2,
+   "mix": "narrow",
+   "fbcsp": 0.33333333333333337,
+   "fbcsp_lw": 0.2777777777777778,
+   "lead_logvar_sLDA": 0.3194444444444444,
+   "wall_s": 19.91024088859558
+  },
+  {
+   "subject": 3,
+   "mix": "narrow",
+   "fbcsp": 0.06944444444444442,
+   "fbcsp_lw": 0.04166666666666663,
+   "lead_logvar_sLDA": 0.5833333333333333,
+   "wall_s": 17.38409185409546
+  },
+  {
+   "subject": 4,
+   "mix": "narrow",
+   "fbcsp": 0.20833333333333337,
+   "fbcsp_lw": 0.1527777777777778,
+   "lead_logvar_sLDA": 0.4444444444444444,
+   "wall_s": 18.03735113143921
+  },
+  {
+   "subject": 5,
+   "mix": "narrow",
+   "fbcsp": 0.1527777777777778,
+   "fbcsp_lw": 0.01388888888888884,
+   "lead_logvar_sLDA": 0.45833333333333337,
+   "wall_s": 15.469185829162598
+  },
+  {
+   "subject": 6,
+   "mix": "narrow",
+   "fbcsp": 0.25,
+   "fbcsp_lw": 0.20833333333333337,
+   "lead_logvar_sLDA": 0.45833333333333337,
+   "wall_s": 18.710813999176025
+  },
+  {
+   "subject": 7,
+   "mix": "narrow",
+   "fbcsp": 0.41666666666666663,
+   "fbcsp_lw": 0.3194444444444444,
+   "lead_logvar_sLDA": 0.5555555555555556,
+   "wall_s": 16.196549654006958
+  },
+  {
+   "subject": 8,
+   "mix": "narrow",
+   "fbcsp": 0.06944444444444442,
+   "fbcsp_lw": 0.08333333333333337,
+   "lead_logvar_sLDA": 0.4305555555555556,
+   "wall_s": 15.72755241394043
+  },
+  {
+   "subject": 9,
+   "mix": "narrow",
+   "fbcsp": 0.08333333333333337,
+   "fbcsp_lw": 0.19444444444444442,
+   "lead_logvar_sLDA": 0.4027777777777778,
+   "wall_s": 17.18038034439087
+  },
+  {
+   "subject": 1,
+   "mix": "broad",
+   "fbcsp": 0.06944444444444442,
+   "fbcsp_lw": 0.05555555555555558,
+   "lead_logvar_sLDA": 0.02777777777777779,
+   "wall_s": 18.000288009643555
+  },
+  {
+   "subject": 2,
+   "mix": "broad",
+   "fbcsp": 0.08333333333333337,
+   "fbcsp_lw": 0.01388888888888884,
+   "lead_logvar_sLDA": 0.1527777777777778,
+   "wall_s": 18.523215770721436
+  },
+  {
+   "subject": 3,
+   "mix": "broad",
+   "fbcsp": 0.18055555555555558,
+   "fbcsp_lw": 0.13888888888888884,
+   "lead_logvar_sLDA": 0.09722222222222221,
+   "wall_s": 17.14848232269287
+  },
+  {
+   "subject": 4,
+   "mix": "broad",
+   "fbcsp": 0.05555555555555558,
+   "fbcsp_lw": 0.04166666666666663,
+   "lead_logvar_sLDA": 0.125,
+   "wall_s": 16.41893172264099
+  },
+  {
+   "subject": 5,
+   "mix": "broad",
+   "fbcsp": 0.02777777777777779,
+   "fbcsp_lw": 0.02777777777777779,
+   "lead_logvar_sLDA": 0.05555555555555558,
+   "wall_s": 16.13114309310913
+  },
+  {
+   "subject": 6,
+   "mix": "broad",
+   "fbcsp": 0.13888888888888884,
+   "fbcsp_lw": 0.02777777777777779,
+   "lead_logvar_sLDA": 0.2222222222222222,
+   "wall_s": 16.365129470825195
+  },
+  {
+   "subject": 7,
+   "mix": "broad",
+   "fbcsp": 0.18055555555555558,
+   "fbcsp_lw": 0.1527777777777778,
+   "lead_logvar_sLDA": 0.06944444444444442,
+   "wall_s": 18.403029203414917
+  },
+  {
+   "subject": 8,
+   "mix": "broad",
+   "fbcsp": -0.01388888888888884,
+   "fbcsp_lw": 0.0,
+   "lead_logvar_sLDA": 0.18055555555555558,
+   "wall_s": 18.040796995162964
+  },
+  {
+   "subject": 9,
+   "mix": "broad",
+   "fbcsp": -0.01388888888888884,
+   "fbcsp_lw": 0.01388888888888884,
+   "lead_logvar_sLDA": 0.11111111111111116,
+   "wall_s": 16.92034673690796
+  }
+ ],
+ "mean": {
+  "narrow": {
+   "fbcsp": 0.18981481481481483,
+   "fbcsp_lw": 0.1574074074074074,
+   "lead_logvar_sLDA": 0.4567901234567901
+  },
+  "broad": {
+   "fbcsp": 0.07870370370370372,
+   "fbcsp_lw": 0.05246913580246912,
+   "lead_logvar_sLDA": 0.11574074074074076
+  }
+ }
+}
