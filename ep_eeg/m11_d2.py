@@ -10,7 +10,7 @@ import argparse, itertools
 from concurrent.futures import ProcessPoolExecutor
 from .data import ROOT
 from .g1_readout import run, features
-from .m11_common import write_receipt, git, M11_OUT, existing
+from .m11_common import write_receipt, git, M11_OUT, run_commit, existing
 
 OUT = M11_OUT / "D2"
 STRUCTS, TRAINERS, SEEDS = ("recip", "lateral", "recip_lat"), ("ep", "ift", "delta"), (3, 4, 5)
@@ -18,12 +18,12 @@ STRUCTS, TRAINERS, SEEDS = ("recip", "lateral", "recip_lat"), ("ep", "ift", "del
 
 def job(a):
     struct, trainer, seed, subject = a
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / f"{struct}_{trainer}", f"A{subject:02d}_s{seed}")
+    prev = existing(OUT / run_commit() / f"{struct}_{trainer}", f"A{subject:02d}_s{seed}")
     if prev: return prev
     cfg = dict(feat="lake", struct=struct, nudge="ce01", eta=0.05, rows="sub", trainer=trainer, probe_every=20 if trainer == "ep" else 0)
     r = run(subject, cfg, seed, "final")
     rec = {"stage": "M11", "step": "D2", "arm": f"{struct}_{trainer}", **r, "settle_rate": r["settle_val"]}
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / f"{struct}_{trainer}", f"A{subject:02d}_s{seed}", rec, subject=subject)
+    write_receipt(OUT / run_commit() / f"{struct}_{trainer}", f"A{subject:02d}_s{seed}", rec, subject=subject)
     return rec
 
 

@@ -23,7 +23,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from sklearn.metrics import cohen_kappa_score
 from .data import ROOT
-from .m11_common import write_receipt, git, M11_OUT, existing
+from .m11_common import write_receipt, git, M11_OUT, run_commit, existing
 
 OUT = M11_OUT / "E"
 FS, TRIAL_S, N_RUN, N_TRIAL = 250, 8.0, 6, 48
@@ -108,7 +108,7 @@ def calibrate():
 
 
 def e1_one(subject, mix, e, seed):
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / f"e1_{mix}", f"S{subject:02d}_s{seed}")
+    prev = existing(OUT / run_commit() / f"e1_{mix}", f"S{subject:02d}_s{seed}")
     if prev: return prev
     from .baselines import fbcsp, lda
     from .m11_a import riemann
@@ -132,7 +132,7 @@ def e1_one(subject, mix, e, seed):
                lake_rejected=int((~oktr).sum() + (~okva).sum()))
     rec = {"stage": "M11", "step": "E1", "arm": f"e1_{mix}", "subject": subject, "seed": seed, "e": e, "mix": mix, **out,
            "settle_rate": out["lake_settle"], "rejected": out["lake_rejected"], "wall_s": time.time() - t0}
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / f"e1_{mix}", f"S{subject:02d}_s{seed}", rec)
+    write_receipt(OUT / run_commit() / f"e1_{mix}", f"S{subject:02d}_s{seed}", rec)
     return rec
 
 
@@ -153,7 +153,7 @@ def planted_teacher(d, seed):
 
 
 def e2_one(subject, trainer, seed):
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / f"e2_{trainer}", f"A{subject:02d}_s{seed}")
+    prev = existing(OUT / run_commit() / f"e2_{trainer}", f"A{subject:02d}_s{seed}")
     if prev: return prev
     from .g1_readout import features, prep, Readout, evaluate
     from eval.scoring import fallback_class
@@ -176,7 +176,7 @@ def e2_one(subject, trainer, seed):
            "kappa_vs_teacher": k, "planted_auc": auc, "lateral_learned_mean": float(eff[lat].mean()), "lateral_planted": -0.2,
            "teacher_class_counts": np.bincount(ytr, minlength=4).tolist(), "accept_rate": st["accepted"] / max(1, st["attempted"]),
            "cert_fail": st["cert_fail"], "settle_rate": settle, "rejected": rej, "pred": pred, "label": yva, "wall_s": time.time() - t0}
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / f"e2_{trainer}", f"A{subject:02d}_s{seed}", rec, subject=subject)
+    write_receipt(OUT / run_commit() / f"e2_{trainer}", f"A{subject:02d}_s{seed}", rec, subject=subject)
     return rec
 
 
@@ -187,7 +187,7 @@ def _e2(a): return e2_one(*a)
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--part", required=True, choices=("calibrate", "e1", "e2"))
     ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--e", type=float, default=None); a = ap.parse_args()
-    out = OUT / git("rev-parse", "--short", "HEAD")
+    out = OUT / run_commit()
     if a.part == "calibrate":
         pick, res = calibrate(); write_receipt(out, "e1_calibration", {"pick": pick, "truth_oracle_inner": res}); print(pick, res); return
     with ProcessPoolExecutor(a.jobs) as ex:

@@ -15,7 +15,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from sklearn.metrics import cohen_kappa_score
 from .data import load_subject, ROOT
-from .m11_common import write_receipt, git, M11_OUT, existing
+from .m11_common import write_receipt, git, M11_OUT, run_commit, existing
 
 OUT = M11_OUT / "B"
 M6 = dict(leak=1.0, rowmass_project=0.9, eta=0.5, temperature=0.01, epochs=100)
@@ -154,7 +154,7 @@ def fmaps_temporal(S):
 
 
 def one(sub, subject, seed):
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / sub, f"A{subject:02d}_s{seed}")
+    prev = existing(OUT / run_commit() / sub, f"A{subject:02d}_s{seed}")
     if prev: return {"arm": sub, "subject": subject, "seed": seed, "kappa_cv": prev["kappa_cv"], "kappa_or": prev["kappa_or"],
                      "wall_s": prev["wall_s"], "nl_or": prev.get("nonlinear", {}).get("kappa_or")}
     t0 = time.time(); d = load_subject(subject); ytr, yva = d["train"]["y"], d["val"]["y"]; info = {}
@@ -189,7 +189,7 @@ def one(sub, subject, seed):
     rec = {"stage": "M11", "step": "B", "arm": arm, "subject": subject, "seed": seed, **res, "label": yva, "diag": info,
            "n_train": int(len(ytr)), "n_val": int(len(yva)), "settle_rate": info["settle_rate"], "rejected": info["rejected"],
            "wall_s": time.time() - t0}
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / arm, f"A{subject:02d}_s{seed}", rec, subject=subject)
+    write_receipt(OUT / run_commit() / arm, f"A{subject:02d}_s{seed}", rec, subject=subject)
     return {"arm": arm, "subject": subject, "seed": seed, "kappa_cv": res["kappa_cv"], "kappa_or": res["kappa_or"],
             "wall_s": rec["wall_s"], "nl_or": res.get("nonlinear", {}).get("kappa_or")}
 

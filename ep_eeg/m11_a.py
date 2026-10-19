@@ -21,7 +21,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, accuracy_score
 from .data import load_subject, ROOT
-from .m11_common import write_receipt, git, M11_OUT, existing
+from .m11_common import write_receipt, git, M11_OUT, run_commit, existing
 
 OUT = M11_OUT / "A"
 ARMS = ("mdm", "tslr", "eegnet_moabb", "eegnet_bd", "mdm_moabbpp", "tslr_moabbpp")
@@ -106,7 +106,7 @@ def eegnet(Xtr, ytr, Xva, seed, kind):
 
 
 def one(arm, subject, seed):
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / arm, f"A{subject:02d}_s{seed}")
+    prev = existing(OUT / run_commit() / arm, f"A{subject:02d}_s{seed}")
     if prev: return {k_: v for k_, v in prev.items() if k_ not in ("pred", "label", "train_info", "env")}
     t0 = time.time(); info = {}
     if arm.endswith("_moabbpp"):
@@ -119,7 +119,7 @@ def one(arm, subject, seed):
     rec = {"stage": "M11", "step": "A", "arm": arm, "subject": subject, "seed": seed, "kappa_val": k, "acc_val": a,
            "settle_rate": 1.0, "rejected": 0, "n_train": int(len(ytr)), "n_val": int(len(yva)),
            "pred": p, "label": yva, "train_info": info, "wall_s": time.time() - t0}
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / arm, f"A{subject:02d}_s{seed}", rec, subject=subject)
+    write_receipt(OUT / run_commit() / arm, f"A{subject:02d}_s{seed}", rec, subject=subject)
     return {k_: v for k_, v in rec.items() if k_ not in ("pred", "label", "train_info")}
 
 

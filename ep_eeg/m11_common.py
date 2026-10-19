@@ -57,3 +57,9 @@ def existing(out_dir, name):
     """Resume after a container restart: a finished run's receipt, or None."""
     p = Path(out_dir) / f"{name}.json"
     return json.loads(p.read_text()) if p.exists() else None
+
+
+def run_commit():
+    """Receipt directory key: the code commit a queue was started from (M11_RUN_COMMIT), so commits of ledger or
+    report text during a long queue do not split one step's receipts or break resume."""
+    return __import__("os").environ.get("M11_RUN_COMMIT") or git("rev-parse", "--short", "HEAD")

@@ -22,7 +22,7 @@ from cadence.learning import Learner, LearnerConfig, learning_neuron_model, Lear
 from cadence.certificate import lipschitz_constant
 from .data import ROOT
 from .ift import implicit_grad, ep_equivalent, free_loss
-from .m11_common import write_receipt, git, M11_OUT, existing
+from .m11_common import write_receipt, git, M11_OUT, run_commit, existing
 
 OUT = M11_OUT / "D1"
 NS, NH, NO, BATCH = 6, 10, 3, 16
@@ -89,7 +89,7 @@ def ep_contrast(lr, D, y):
 
 
 def cell(seed, leak, budget, amp, nudge, valid_only=False):
-    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}")
+    prev = existing(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}")
     if prev: return prev
     t0 = time.time(); lr, kind, conn = build(seed, leak, budget, nudge); D, y = batch(seed, amp, conn.n)
     idx, pcls = physical(lr, kind); free_idx = np.arange(NS, conn.n)
@@ -124,7 +124,7 @@ def cell(seed, leak, budget, amp, nudge, valid_only=False):
         except LearningPhaseError as err:
             res["grid"].append({"beta": beta, "tol": tol, "refused": err.phase})
     res["wall_s"] = time.time() - t0
-    write_receipt(OUT / git("rev-parse", "--short", "HEAD") / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}", res)
+    write_receipt(OUT / run_commit() / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}", res)
     return res
 
 
@@ -168,7 +168,7 @@ def _real(a): return real_sandbox(*a)
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--part", default="small,asym,real", help="valid first (M1-11), then small,asym,real")
-    a = ap.parse_args(); out = OUT / git("rev-parse", "--short", "HEAD"); parts = a.part.split(",")
+    a = ap.parse_args(); out = OUT / run_commit(); parts = a.part.split(",")
     with ProcessPoolExecutor(a.jobs) as ex:
         if "valid" in parts:  # amendment M1-11: IFT vs FD alone, committed before any EP-vs-IFT comparison
             for r in ex.map(_valid, list(itertools.product((0, 1, 2), LEAKS, BUDGETS, AMPS, NUDGES))):
