@@ -31,7 +31,7 @@ from .data import load_subject, ROOT
 
 M6 = dict(leak=1.0, rowmass_project=0.9, eta=0.5, temperature=0.01)
 NUDGES = {"ce001": ("cross_entropy", 0.01), "ce01": ("cross_entropy", 0.1), "mse": ("quadratic", 0.2)}
-STRUCTS = ("recip", "untied", "oneway", "lateral")
+STRUCTS = ("recip", "untied", "oneway", "lateral", "recip_lat")  # recip_lat: M11 D2 (recip + motor<->motor)
 FEATS = ("lake", "raw")
 GRID = [dict(feat=f, struct=s, nudge=n, eta=e, rows=r)
         for f, s, n, e, r in itertools.product(FEATS, STRUCTS, NUDGES, (0.05, 0.5), ("sub", "trial"))]
@@ -68,19 +68,23 @@ def ridge_ref(Ztr, ytr, Zva, yva):
 
 
 class Readout:
-    def __init__(self, d, struct, nudge, eta, seed):
+    def __init__(self, d, struct, nudge, eta, seed, asym_eps=0.0):
+        """asym_eps > 0 (M11 E2 known-wrong student): reciprocal=False and the feedback direction (post < pre)
+        of every free pair multiplied by (1 + asym_eps * xi), xi ~ N(0, 1), after initialisation."""
         rng = np.random.default_rng(seed); self.d, self.struct = d, struct
         n = d + 4; self.out = list(range(d, n)); syn = {}
         for a in range(d):
             for o in self.out:
                 w = rng.normal(0, 0.01); syn[(a, o)] = w
-                if struct in ("recip", "untied"): syn[(o, a)] = w
-        if struct == "lateral":
+                if struct in ("recip", "untied", "recip_lat"): syn[(o, a)] = w
+        if struct in ("lateral", "recip_lat"):
             for o, q in itertools.combinations(self.out, 2): syn[(o, q)] = syn[(q, o)] = 0.0
         keys = list(syn); pre = np.array([p for p, _ in keys]); post = np.array([q for _, q in keys])
         self.conn = cd.Connectome.from_synapses(n, pre=pre, post=post)
         self.pre, self.post = self.conn.pre, self.conn.post
         eff = np.array([syn[(p, q)] for p, q in zip(self.pre, self.post)])
+        if asym_eps > 0:
+            fb = self.pre > self.post; eff = np.where(fb, eff * (1 + asym_eps * rng.normal(size=len(eff))), eff)
         self.sources = list(range(d)) if struct in ("oneway", "lateral") else []
         self.counted = ~np.isin(self.pre, self.sources)
         brain = cd.NeuralGraph(self.conn, learning_neuron_model(leak=1.0), efficacy=eff, bias=np.zeros(n))
@@ -92,7 +96,7 @@ class Readout:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             self.learner = Learner(brain, self.out, config=self.lc, plastic_synapses=np.ones(len(eff), bool),
-                                   plastic_neurons=pn, reciprocal=(struct != "untied"))
+                                   plastic_neurons=pn, reciprocal=(struct != "untied" and asym_eps == 0))
         self.n_params = self.learner.parameters() if callable(getattr(self.learner, "parameters", None)) else None
         self.n_projections = 0
 
@@ -124,8 +128,13 @@ class Readout:
         a = np.asarray(eq.state.activation)[:, self.out]
         return a, np.asarray(eq.converged) & np.isfinite(a).all(1)
 
-    def fit(self, Z, y, epochs, rng, batch=32):
-        st = {"attempted": 0, "accepted": 0, "refused": 0, "cert_fail": None, "cert_init": self.cert()}
+    def fit(self, Z, y, epochs, rng, batch=32, trainer="ep", probe_every=0):
+        """trainer "ep": cadence Learner.step; "ift" (M11 D2): same qualified free phase, batches, step convention,
+        clipping and projection, but the update is eta * ep_equivalent(implicit gradient); "delta": the same with
+        the adjoint not propagated through the couplings (no feedback credit). probe_every > 0 (EP only):
+        every n-th batch, cosine between the EP contrast and the IFT step at the same free state."""
+        from .ift import implicit_grad, ep_equivalent
+        st = {"attempted": 0, "accepted": 0, "refused": 0, "cert_fail": None, "cert_init": self.cert(), "probe_cos": []}
         if not st["cert_init"]["certified"]: st["cert_fail"] = "init"; return st
         D = self.drive(Z)
         for ep in range(epochs):
@@ -135,7 +144,17 @@ class Readout:
                 try:
                     with warnings.catch_warnings():
                         warnings.simplefilter("ignore")
-                        self.learner.step(D[b], y[b])
+                        L = self.learner
+                        if trainer in ("ift", "delta"):
+                            free = L.free(D[b]); g, gb, _, _ = implicit_grad(L, free, y[b], propagate=trainer == "ift")
+                            c, cb = ep_equivalent(L, g, gb)
+                            L.apply(L.config.eta * c, L.config.eta_bias * cb)
+                        elif probe_every and st["attempted"] // len(b) % probe_every == 1:
+                            free = L.free(D[b]); g, gb, _, _ = implicit_grad(L, free, y[b]); c, _ = ep_equivalent(L, g, gb)
+                            ls, _ = L.step(D[b], y[b]); e, _ = L.contrast(ls.free, ls.nudged, ls.opposite)
+                            st["probe_cos"].append(float(e @ c / (np.linalg.norm(e) * np.linalg.norm(c) + 1e-300)))
+                        else:
+                            L.step(D[b], y[b])
                     st["accepted"] += len(b); self.project()
                 except LearningPhaseError:
                     st["refused"] += len(b)
@@ -149,7 +168,7 @@ def evaluate(net, Zva, yva, fb, rows):
         a, ok = net.scores(trial_drive(Zva)); a, ok = a[:, None], ok[:, None]
     else:
         n, k, d = Zva.shape; a, ok = net.scores(Zva.reshape(-1, d)); a, ok = a.reshape(n, k, 4), ok.reshape(n, k)
-    pred, rej = aggregate(a, ok, fb)
+    pred, rej = aggregate(a, ok, fb); evaluate.last_pred = pred  # M11: receipts keep predictions
     return float(cohen_kappa_score(yva, pred)), int(rej.sum()), float(ok.mean())
 
 
@@ -168,12 +187,16 @@ def run(subject, cfg, seed, split):
         X, y, epochs = trial_drive(Ztr), ytr, 1100
     else:
         X, y, epochs = Ztr.reshape(-1, Ztr.shape[-1]), np.repeat(ytr, Ztr.shape[1]), 100
-    st = net.fit(X, y, epochs, rng)
+    eff0 = np.asarray(net.brain.efficacy).copy()
+    st = net.fit(X, y, epochs, rng, trainer=cfg.get("trainer", "ep"), probe_every=cfg.get("probe_every", 0))
+    dtheta = (np.asarray(net.brain.efficacy) - eff0).tolist()
     k, rej, settle = evaluate(net, Zva, yva, fallback_class(ytr), cfg["rows"]) if st["cert_fail"] is None else (0.0, len(yva), 0.0)
     return {"subject": subject, "seed": seed, "split": split, **cfg, "kappa_ep": k, "kappa_ridge": ref, "gap": ref - k,
             "rejected": rej, "settle_val": settle, "accept_rate": st["accepted"] / max(1, st["attempted"]),
             "cert_fail": st["cert_fail"], "row_mass_final": st.get("cert_final", {}).get("row_mass"),
-            "n_projections": st.get("n_projections"), "wall_s": time.time() - t0}
+            "n_projections": st.get("n_projections"), "probe_cos": st.get("probe_cos"),
+            "pred": np.asarray(getattr(evaluate, "last_pred", [])).tolist() if st["cert_fail"] is None else None,
+            "label": yva.tolist(), "dtheta": dtheta, "wall_s": time.time() - t0}
 
 
 def _job(a): return run(*a)

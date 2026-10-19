@@ -1,4 +1,5 @@
-"""G3 (reports/M10-gates.md, pre-registered): can a cadence temporal module learn "square + ~1 s integration"
+"""G3 (reports/M10-gates.md, pre-registered); M11 C0 adds variant["proj"] (rho(A) cap) and --phase c0refs.
+G3: can a cadence temporal module learn "square + ~1 s integration"
 from a waveform by EP?
 
 Synthetic, 125 Hz, 4 s sequences: x = a(t) sin(2 pi 10 t / 125 + phi) + 0.05 eps; a(t) in [0.1, 1] is a
@@ -74,6 +75,9 @@ def ep_run(task, variant, seed, eval_split="select", o=OPTS):
         tgt = np.where(np.isnan(tgt), free, tgt); tgt[:, :win] = free[:, :win]
         net.reset(); r = net.observe(u, tgt, beta=o["beta"], rate=0.0 if adam else o["rate"])
         if adam and r.updated: adam.step(net, r.delta)
+        if variant.get("proj") and r.updated:  # M11 C0: spectral-radius projection rho(A) <= cap after each accepted update
+            P = net.parameters(); rad = float(np.abs(np.linalg.eigvals(P["A"])).max())
+            if rad > variant["proj"]: P["A"] = P["A"] * (variant["proj"] / rad); net.set_parameters(P); st["projections"] = st.get("projections", 0) + 1
         st["attempted"] += 1; st["updated"] += int(r.updated); st["reasons"][r.reason] = st["reasons"].get(r.reason, 0) + 1
         if (it + 1) % 250 == 0:
             st["curve"].append({"update": it + 1, "r2_train": r2(predict(net, Utr[:16]), ytr[:16], win),
@@ -83,7 +87,8 @@ def ep_run(task, variant, seed, eval_split="select", o=OPTS):
     out = {"task": task, **variant, "seed": seed, "split": eval_split, "r2": r2(predict(net, Uev), yev, win),
            "settle_rate": st["updated"] / max(1, st["attempted"]), "A_radius": rad, "train": st, "wall_s": time.time() - t0}
     if os.environ.get("G3_RUN_DIR"):  # per-run receipt, so a container restart loses at most the runs in flight
-        Path(os.environ["G3_RUN_DIR"], f"{task}_{variant['a_init']}_{variant['opt']}_s{seed}_{eval_split}.json").write_text(json.dumps(out, default=float))
+        tag = f"_proj{variant['proj']}" if variant.get("proj") else ""
+        Path(os.environ["G3_RUN_DIR"], f"{task}_{variant['a_init']}_{variant['opt']}{tag}_s{seed}_{eval_split}.json").write_text(json.dumps(out, default=float))
     return out
 
 
@@ -102,7 +107,7 @@ def references(task, seed=0, o=OPTS):
     return out
 
 
-def bptt(task, seed, o):
+def bptt(task, seed, o, proj=None):
     import torch
     torch.manual_seed(seed); Utr, ytr, win = make(task, *SPLITS["train"]); Ute, yte, _ = make(task, *SPLITS["test"])
     H = o["H"]; q, _ = np.linalg.qr(np.random.default_rng(seed).normal(size=(H, H)))
@@ -119,8 +124,26 @@ def bptt(task, seed, o):
         u = torch.tensor(np.stack([Utr[a, b:b + L] for a, b in zip(j, s0)])); tg = np.stack([ytr[a, b:b + L] for a, b in zip(j, s0)])
         m = torch.tensor(~np.isnan(tg)); m[:, :win] = False; tg = torch.tensor(np.nan_to_num(tg))
         loss = (((fwd(u) - tg) ** 2) * m).sum() / m.sum(); opt.zero_grad(); loss.backward(); opt.step()
+        if proj:  # M11 C0: same projection as the EP arm
+            with torch.no_grad():
+                rad = float(np.abs(np.linalg.eigvals(A.numpy())).max())
+                if rad > proj: A.mul_(proj / rad)
     with torch.no_grad(): yh = fwd(torch.tensor(Ute)).numpy()
     return r2(yh, yte, win)
+
+
+def c0_refs(seed, cap, o=OPTS):
+    """M11 C0 references under the cap: BPTT with the same projection, and an untrained net at radius cap + ridge."""
+    from sklearn.linear_model import RidgeCV
+    task = "full"; Utr, ytr, win = make(task, *SPLITS["train"]); Ute, yte, _ = make(task, *SPLITS["test"])
+    net = TemporalPatchNet(2, o["H"], 1, seed=seed, initial_radius=cap)
+    hid = lambda U: np.tanh(net.imagine(U, state=np.zeros((len(U), o["H"]))).hidden)[:, win:].reshape(-1, o["H"])
+    res = RidgeCV(alphas=np.logspace(-4, 3, 15)).fit(hid(Utr), ytr[:, win:].ravel())
+    r_res = float(1 - ((res.predict(hid(Ute)) - yte[:, win:].ravel()) ** 2).sum() / ((yte[:, win:] - yte[:, win:].mean()) ** 2).sum())
+    return {"seed": seed, "cap": cap, "reservoir_ridge": r_res, "bptt_proj": bptt(task, seed, {**o, "radius": min(o["radius"], cap)}, proj=cap)}
+
+
+def _c0ref(a): return c0_refs(*a)
 
 
 def _ep(a): return ep_run(*a)
@@ -128,7 +151,7 @@ def _ref(t): return references(t)
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--phase", choices=("select", "final", "refs"), required=True)
+    ap = argparse.ArgumentParser(); ap.add_argument("--phase", choices=("select", "final", "refs", "c0refs"), required=True)
     ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--variant", default=None); ap.add_argument("--updates", type=int, default=None); ap.add_argument("--seeds", default=None, help="json list of seed lists, one per variant")
     a = ap.parse_args(); o = {**OPTS, **({"updates": a.updates} if a.updates else {})}
     commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip()
@@ -136,6 +159,8 @@ def main():
     with ProcessPoolExecutor(a.jobs) as ex:
         if a.phase == "refs":
             res = list(ex.map(_ref, ("full", "int", "sq")))
+        elif a.phase == "c0refs":  # M11 C0 references (BPTT + projection, reservoir at the cap), caps 0.95 and 0.99
+            res = list(ex.map(_c0ref, [(s, c) for c in (0.95, 0.99) for s in (0, 1, 2)]))
         elif a.phase == "select":
             res = list(ex.map(_ep, [(t, v, 0, "select") for t in ("full", "int", "sq") for v in VARIANTS]))
         else:  # reports/M10-gates.md deviation: list of variants, each on the test split with seeds 0-2
