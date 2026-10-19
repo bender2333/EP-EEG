@@ -1,0 +1,133 @@
+{
+ "env": {
+  "commit": "1e3278ca31d641490d37eefda8579f76e7aa3ead",
+  "dirty": true,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "1",
+  "NUMBA_NUM_THREADS": null,
+  "MKL_NUM_THREADS": "1",
+  "OPENBLAS_NUM_THREADS": "1",
+  "torch_threads": 1
+ },
+ "loadavg": [
+  7.748046875,
+  5.35595703125,
+  2.57275390625
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": false,
+ "written": "2026-10-19T12:10:22",
+ "gen": 0,
+ "k": 557,
+ "kind": "cert",
+ "backend": "cpu64",
+ "ns": 6,
+ "nf": 8,
+ "density": 0.5,
+ "symmetric": false,
+ "dt": 0.2,
+ "amp": 0.5,
+ "groups": 3,
+ "group_a": [
+  0.6452107586169396,
+  1.9070512038546945,
+  1.159593610066517
+ ],
+ "group_b": [
+  -1.2340434795936401,
+  0.4943527782686026,
+  -0.12616272253569516
+ ],
+ "target": 0.25045697549913115,
+ "W_sha256": "907d3f98dbba1b34b11861de509753e9e8532b20418fe40d9683ce7823d9933a",
+ "X_sha256": "f1c37de8a783206db34195c5933ddd3ad6930b48fae735f5f0dca99601bcd46b",
+ "bias_sha256": "ebf74420b9c971be80f3bc34529e2ea70270c05d82a2baf0cdb73bb49d44989d",
+ "start_sha256": "9f699f32ee5aac38758accca9d89d3a84c3536f0a0f5d471730fa2fa341f3de7",
+ "certificate": {
+  "row_mass": 6.147705447685971,
+  "lipschitz": 1.0108704881849495,
+  "dt": 0.2,
+  "rate": 0.8500913950998262,
+  "certified": true,
+  "mass_limit": 0.9892464086032744,
+  "adaptation": false,
+  "row_mass_free": 0.28542137653205163,
+  "sources": [
+   0,
+   1,
+   2,
+   3,
+   4,
+   5
+  ],
+  "weighted_row_mass": 6.116537232209684,
+  "weighted_row_mass_free": 0.25045697549913104
+ },
+ "lipschitz_cadence": [
+  0.5865056038261608,
+  0.7047432294538643,
+  1.0108704881849495
+ ],
+ "lipschitz_ref": [
+  0.5865056038261608,
+  0.7047432294538643,
+  1.0108704881849497
+ ],
+ "fixed_incoming_mass": 0.0,
+ "rho_cadence": 0.25045697549913104,
+ "rho_ref": 0.2504569754991311,
+ "recompute_tol": 2.8642137653205167e-10,
+ "recompute_ok": true,
+ "near_one": false,
+ "rho_mutant_alpha": 0.1971386557064782,
+ "rho_mutant_beta": 0.2885240462333754,
+ "mutant_alpha_flagged": true,
+ "mutant_beta_flagged": true,
+ "steps": [
+  128,
+  128
+ ],
+ "qualified": [
+  true,
+  true
+ ],
+ "finite": [
+  true,
+  true
+ ],
+ "residual_max": [
+  6.010103525966315e-11,
+  4.92851898181712e-10
+ ],
+ "start_diff": 5.203463493419491e-10,
+ "m_in": 5.939534099757147,
+ "uniqueness_threshold": 1.9516706507617168e-08,
+ "visited_bound_max": 0.19904560122431797,
+ "visited_bound_ok": true,
+ "detector_flagged": false,
+ "rate_bound_steps": 720,
+ "rate_violation": false,
+ "false_positive": false,
+ "wall_s": 0.11600399017333984
+}

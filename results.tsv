@@ -199,3 +199,8 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 53737b0	M12-S0	precheck_regression	NA	NA	NA	3	0	pass	N12 regression: 36/36 cells pass (fork sigmoid == c414c85, evenodd(1,0) == sigmoid, <= 1e-12)
 53737b0	M12-S0	precheck_unit	NA	NA	NA	1	4	pass	N2 activation unit tests: 23 passed in 2.16s; L grid check 9/9
 53737b0	M12-S0	D1_valid	NA	NA	NA	3	8	done	S0 D1 part valid: 144 receipts (std 72 + hetero 36 + tied 36 cells)
+53737b0	M12-S0	D1_ep	NA	NA	NA	3	270	done	S0 D1 part ep: 432 receipts (std 72 + hetero 36 + tied 36 cells)
+53737b0	M12-S0	A2_cpu64	NA	NA	NA	1	19	done	A2 cpu64: 1400 configs, 0 false positives (full judgement in m12_verify)
+53737b0	M12-S0	A2_torch64	NA	NA	NA	1	20	done	A2 torch64: 1400 configs, 0 false positives (full judgement in m12_verify)
+53737b0	M12-S0	A3_bench	NA	NA	NA	1	244	done	A3 throughput H=512 / 1760 / batch 64 on cpu64, torch64, torch32 (8x1, 2x4); GPU not available
+53737b0	M12-S0	G0	NA	NA	NA	3	586	pending	G0 = waiting for user: prechecks, A1, A2, A3-CPU all pass; GPU untested (no GPU); U = 40847 (torch32 2x4), U_min 9720
