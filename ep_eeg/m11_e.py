@@ -23,7 +23,7 @@ import numpy as np
 from scipy.signal import butter, sosfilt
 from sklearn.metrics import cohen_kappa_score
 from .data import ROOT
-from .m11_common import write_receipt, git, M11_OUT
+from .m11_common import write_receipt, git, M11_OUT, existing
 
 OUT = M11_OUT / "E"
 FS, TRIAL_S, N_RUN, N_TRIAL = 250, 8.0, 6, 48
@@ -108,6 +108,8 @@ def calibrate():
 
 
 def e1_one(subject, mix, e, seed):
+    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / f"e1_{mix}", f"S{subject:02d}_s{seed}")
+    if prev: return prev
     from .baselines import fbcsp, lda
     from .m11_a import riemann
     from .m11_b import ceilings, fmaps_static, static_states, M6
@@ -151,6 +153,8 @@ def planted_teacher(d, seed):
 
 
 def e2_one(subject, trainer, seed):
+    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / f"e2_{trainer}", f"A{subject:02d}_s{seed}")
+    if prev: return prev
     from .g1_readout import features, prep, Readout, evaluate
     from eval.scoring import fallback_class
     from sklearn.metrics import roc_auc_score

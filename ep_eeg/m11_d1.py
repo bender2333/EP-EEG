@@ -22,7 +22,7 @@ from cadence.learning import Learner, LearnerConfig, learning_neuron_model, Lear
 from cadence.certificate import lipschitz_constant
 from .data import ROOT
 from .ift import implicit_grad, ep_equivalent, free_loss
-from .m11_common import write_receipt, git, M11_OUT
+from .m11_common import write_receipt, git, M11_OUT, existing
 
 OUT = M11_OUT / "D1"
 NS, NH, NO, BATCH = 6, 10, 3, 16
@@ -89,6 +89,8 @@ def ep_contrast(lr, D, y):
 
 
 def cell(seed, leak, budget, amp, nudge, valid_only=False):
+    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / ("valid" if valid_only else "small"), f"s{seed}_leak{leak}_b{budget}_amp{amp}_{nudge}")
+    if prev: return prev
     t0 = time.time(); lr, kind, conn = build(seed, leak, budget, nudge); D, y = batch(seed, amp, conn.n)
     idx, pcls = physical(lr, kind); free_idx = np.arange(NS, conn.n)
     classes = np.r_[pcls, np.array(["bias"] * len(free_idx))]

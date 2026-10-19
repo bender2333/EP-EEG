@@ -51,3 +51,9 @@ def write_receipt(out_dir, name, payload, subject=None, kind="mat"):
     p = out_dir / f"{name}.json"; tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(rec, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o)))
     tmp.replace(p); return p
+
+
+def existing(out_dir, name):
+    """Resume after a container restart: a finished run's receipt, or None."""
+    p = Path(out_dir) / f"{name}.json"
+    return json.loads(p.read_text()) if p.exists() else None

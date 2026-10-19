@@ -21,7 +21,7 @@ from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 from sklearn.metrics import cohen_kappa_score, accuracy_score
 from .data import load_subject, ROOT
-from .m11_common import write_receipt, git, M11_OUT
+from .m11_common import write_receipt, git, M11_OUT, existing
 
 OUT = M11_OUT / "A"
 ARMS = ("mdm", "tslr", "eegnet_moabb", "eegnet_bd", "mdm_moabbpp", "tslr_moabbpp")
@@ -106,6 +106,8 @@ def eegnet(Xtr, ytr, Xva, seed, kind):
 
 
 def one(arm, subject, seed):
+    prev = existing(OUT / git("rev-parse", "--short", "HEAD") / arm, f"A{subject:02d}_s{seed}")
+    if prev: return {k_: v for k_, v in prev.items() if k_ not in ("pred", "label", "train_info", "env")}
     t0 = time.time(); info = {}
     if arm.endswith("_moabbpp"):
         d = moabb_pp(subject); (Xtr, ytr), (Xva, yva) = d["train"], d["val"]

@@ -170,3 +170,4 @@ fe07023	G10	g3_select_interim	NA	NA	NA	1	13500	crash	G3 select killed by choice 
 21ebf05	G10	g3_refs_sq	NA	NA	NA	1	NA	keep	G3 refs, squaring only (0.1 s window): linear -0.008, reservoir 0.943, BPTT 0.997
 0807b01	G10	g3_final_orth_adam	0.7253	NA	0.80	3	18882	discard	G3 PRE-REGISTERED (deviation disclosed): orth-adam test R2 0.792/0.613/0.771 mean 0.725 < 0.8 -> G3 FAILS; accept 0.94/0.60/0.86, A spectral radius grew to 1.15-1.43; still > reservoir+ridge 0.508 and BPTT 0.081
 0807b01	G10	g3_final_orth_sgd	0.2170	NA	0.96	3	15577	discard	G3 report-only: orth-sgd test R2 -0.050/0.361/0.340 mean 0.217; peaks 0.55-0.67 mid-training then collapse
+dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, before any EP-vs-IFT comparison): implicit gradient vs central differences at 1e-11, 72/72 cells (3 seeds x leak x budget x amp x nudge) cos >= 0.99999 in every parameter class; hidden saturation 0-0.25

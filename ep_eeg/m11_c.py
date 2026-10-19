@@ -33,7 +33,7 @@ OUT = M11_OUT / "C"
 N_CH, K_COL, H, BURN, CROP, FS = 22, 2, 44, 25, 125, 125
 HORIZONS, LAGS = (1, 5, 25, 125), (0, 1, 2, 4, 8, 16, 32)
 GAINS, PORTS, P_GRID = (1.0, 3.0, 10.0), (0.0, 1.0, 5.0), (1, 2, 4, 6, 10, 16, 25)
-OPT = dict(beta=0.05, lr=0.003, batch=16, budget_s=7200.0, crash_s=14400.0, proj=0.95)
+OPT = dict(beta=0.05, batch=16, budget_s=7200.0, crash_s=14400.0, proj=0.95)
 GEN_LEN, GEN_DROP, N_GEN = 7750, 250, 4
 ALPHAS = np.logspace(-3, 3, 13)
 
@@ -254,8 +254,8 @@ def evaluate(model, runs, subject, seed, val_ref=None, fl=None):
 
 
 # ---------------- training ----------------
-def crops(runs, rng, n):
-    pool = [(i, usable_pairs(ok, 0, CROP)) for i, (z, ok, *_) in enumerate(runs[:4])]
+def crops(runs, rng, n, n_tr=4):
+    pool = [(i, usable_pairs(ok, 0, CROP)) for i, (z, ok, *_) in enumerate(runs[:n_tr])]
     w = np.array([len(p) for _, p in pool], float); w /= w.sum(); out_u, out_y = [], []
     for _ in range(n):
         i = rng.choice(len(pool), p=w); s = pool[i][1][rng.integers(len(pool[i][1]))]; z = runs[i][0]
@@ -276,9 +276,9 @@ def project(A, cap):
     r = float(np.abs(np.linalg.eigvals(A)).max()); return (A * (cap / r), True) if r > cap else (A, False)
 
 
-def train_ep(net, model, runs, seed, U, proj, gain, port, deadline):
+def train_ep(net, model, runs, seed, U, proj, gain, port, deadline, lr):
     from .m9_temporal import Adam
-    rng = np.random.default_rng(seed + 100); adam = Adam(OPT["lr"]); zw = monitor_window(runs); t0 = time.time()
+    rng = np.random.default_rng(seed + 100); adam = Adam(lr); zw = monitor_window(runs); t0 = time.time()
     st = {"attempted": 0, "updated": 0, "reasons": {}, "projections": 0, "rho_max": 0.0, "curve": [], "stopped": "U"}
     every = max(1, U // 8)
     for it in range(U):
@@ -299,17 +299,17 @@ def train_ep(net, model, runs, seed, U, proj, gain, port, deadline):
     st["accept_rate"] = st["updated"] / max(1, st["attempted"]); return st
 
 
-def train_bptt(P0, runs, seed, U, proj, gain, port, linear, deadline):
+def train_bptt(P0, runs, seed, U, proj, gain, port, linear, deadline, lr, n_tr=4, monitor=True):
     import torch
     torch.manual_seed(seed); torch.set_num_threads(1); m = masks(port)
     A = torch.tensor(P0["A"], requires_grad=True); B = torch.tensor(P0["B"], requires_grad=True); C = torch.tensor(P0["C"], requires_grad=True)
     mA, mB = torch.tensor(m["A"], dtype=torch.float64), torch.tensor(m["B"], dtype=torch.float64)
-    act = (lambda x: x) if linear else torch.tanh; opt = torch.optim.Adam([A, B, C], lr=OPT["lr"]); rng = np.random.default_rng(seed + 100)
-    model = Net({k: v.copy() for k, v in P0.items()}, gain, port, linear); zw = monitor_window(runs); t0 = time.time()
+    act = (lambda x: x) if linear else torch.tanh; opt = torch.optim.Adam([A, B, C], lr=lr); rng = np.random.default_rng(seed + 100)
+    model = Net({k: v.copy() for k, v in P0.items()}, gain, port, linear); zw = monitor_window(runs) if monitor else None; t0 = time.time()
     st = {"attempted": 0, "updated": 0, "projections": 0, "rho_max": 0.0, "curve": [], "stopped": "U"}; every = max(1, U // 8)
     for it in range(U):
         if time.time() - t0 > deadline: st["stopped"] = "budget"; break
-        zs, tgt = crops(runs, rng, OPT["batch"]); u = torch.tensor(np.stack([model.enc(z) for z in zs])); tg = torch.tensor(tgt)
+        zs, tgt = crops(runs, rng, OPT["batch"], n_tr); u = torch.tensor(np.stack([model.enc(z) for z in zs])); tg = torch.tensor(tgt)
         Am, Bm = A * mA, B * mB; h = torch.zeros(len(u), H, dtype=torch.float64); ys = []
         for t in range(CROP):
             h = act(h) @ Am.T + u[:, t] @ Bm.T; ys.append(act(h) @ C.T)
@@ -321,7 +321,7 @@ def train_bptt(P0, runs, seed, U, proj, gain, port, linear, deadline):
                 if did: A.copy_(torch.tensor(An)); st["projections"] += 1
             st["rho_max"] = max(st["rho_max"], float(np.abs(np.linalg.eigvals((A * mA).numpy())).max()))
         st["attempted"] += 1; st["updated"] += 1
-        if (it + 1) % every == 0:
+        if monitor and (it + 1) % every == 0:
             model.P = {"A": (A * mA).detach().numpy().copy(), "B": (B * mB).detach().numpy().copy(), "C": C.detach().numpy().copy()}
             st["curve"].append({"update": it + 1, "mon_r2": mon_r2(model, zw), "wall": time.time() - t0})
     model.P = {"A": (A * mA).detach().numpy().copy(), "B": (B * mB).detach().numpy().copy(), "C": C.detach().numpy().copy()}
@@ -346,11 +346,24 @@ def varp_score(subject, p):
     return float(np.mean(1 - ((y - tt) ** 2).sum(0) / ((tt - tt.mean(0)) ** 2).sum(0)))
 
 
+LRS = (1e-5, 3e-5, 1e-4, 3e-4, 1e-3, 3e-3)
+
+
+def lr_score(subject, lr):
+    """Amendment M2-1: BPTT from C_res on runs 0-2 crops, min(U, 200) updates, h=1 R^2 on run 3 (seed 0)."""
+    s = settings(); gain, port = s["gain"], s["port"]; runs = data(subject)["runs"]
+    base = Net(params(new_net(0, port)), gain, port).fit_readout(runs[:3])
+    m, st = train_bptt(base.P, runs, 0, min(s["U"], 200), False, gain, port, False, 1e9, lr, n_tr=3, monitor=False)
+    z, ok = runs[3][0], runs[3][1]; S = m.run_states(z); t = usable_pairs(ok, 0, 1); y = m.predict(S[t]); tt = z[:, t + 1].T
+    with np.errstate(all="ignore"): r = float(np.mean(1 - ((y - tt) ** 2).sum(0) / ((tt - tt.mean(0)) ** 2).sum(0)))
+    return r if np.isfinite(r) else -np.inf
+
+
 def timing_job(subject):
     s = settings(); gain, port = s["gain"], s["port"]; runs = data(subject)["runs"]
     net = new_net(0, port); m = Net(params(net), gain, port).fit_readout(runs[:4]); P = net.parameters(); P["C"] = m.P["C"]; net.set_parameters(P)
     from .m9_temporal import Adam
-    rng = np.random.default_rng(100); adam = Adam(OPT["lr"]); ts = []
+    rng = np.random.default_rng(100); adam = Adam(0.003); ts = []  # timing only
     for _ in range(20):
         t0 = time.time(); zs, tgt = crops(runs, rng, OPT["batch"]); u = np.stack([encode(z, gain, port) for z in zs])
         free = net.imagine(u, state=np.zeros((len(u), H))).output; tgt[:, :BURN] = free[:, :BURN]
@@ -372,12 +385,12 @@ def run_arm(arm, subject, seed):
         elif arm.startswith("ep_"):
             net = new_net(seed, port); model = Net(params(net), gain, port).fit_readout(runs[:4])
             P = net.parameters(); P["C"] = model.P["C"]; net.set_parameters(P)
-            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, OPT["budget_s"])
+            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, OPT["budget_s"], s["lr"])
         else:  # bptt_{noproj,proj}_{U,2000}, lin_bptt_2000
             parts = arm.split("_"); linear = arm.startswith("lin_"); n_upd = U if parts[-1] == "U" else int(parts[-1])
             base = Net(params(new_net(seed, port)), gain, port, linear=linear).fit_readout(runs[:4])
             model, info["train"] = train_bptt(base.P, runs, seed, n_upd, "proj" in parts, gain, port, linear,
-                                               OPT["budget_s"] if parts[-1] == "U" else 4 * OPT["budget_s"])
+                                               OPT["budget_s"] if parts[-1] == "U" else 4 * OPT["budget_s"], s["lr"])
         if time.time() - t0 > OPT["crash_s"] and not arm.endswith("2000"): raise TimeoutError("over 14400 s")
         res = evaluate(model, runs, subject, seed)
     except Exception as e:  # amendment M1-6: a crash is a loss, flagged
@@ -419,11 +432,12 @@ def e3_job(subject, seed):
 def _enc(a): return encode_score(*a)
 def _varp(a): return varp_score(*a)
 def _arm(a): return run_arm(*a)
+def _lr(a): return lr_score(*a)
 def _e3(a): return e3_job(*a)
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--phase", required=True, choices=("integrity", "select", "timing", "main", "e3"))
+    ap = argparse.ArgumentParser(); ap.add_argument("--phase", required=True, choices=("integrity", "select", "timing", "lrsel", "main", "e3"))
     ap.add_argument("--jobs", type=int, default=4); ap.add_argument("--arms", default=None); ap.add_argument("--subjects", default="1-9")
     ap.add_argument("--seeds", default="0,1,2"); a = ap.parse_args(); OUT.mkdir(parents=True, exist_ok=True)
     lo, hi = map(int, a.subjects.split("-")); subs = range(lo, hi + 1); seeds = list(map(int, a.seeds.split(",")))
@@ -445,6 +459,12 @@ def main():
             U = int(min(400, np.floor(OPT["budget_s"] / tbar))); st = {**settings(), "U": U, "t_bar_s": tbar}
             (OUT / "settings.json").write_text(json.dumps(st, indent=1)); write_receipt(OUT, "timing", {"per_process": res, "t_bar_s": tbar, "U": U})
             print("t_bar", tbar, "U", U)
+        elif a.phase == "lrsel":
+            jobs = [(s_, lr) for lr in LRS for s_ in subs]; sc = list(ex.map(_lr, jobs))
+            table = {str(lr): float(np.mean([v for (s_, l), v in zip(jobs, sc) if l == lr])) for lr in LRS}
+            best = max(LRS, key=lambda lr: table[str(lr)]); st = {**settings(), "lr": best}
+            (OUT / "settings.json").write_text(json.dumps(st, indent=1))
+            write_receipt(OUT, "lrsel", {"r2_h1_run3": table, "per_job": [list(j) + [v] for j, v in zip(jobs, sc)], "chosen_lr": best}); print(table, best)
         elif a.phase == "main":
             jobs = [(arm, s, r) for arm in a.arms.split(",") for r in seeds for s in subs]
             done = {(p.parent.name, p.stem) for p in (OUT / "runs").glob("*/*.json")} if (OUT / "runs").exists() else set()
