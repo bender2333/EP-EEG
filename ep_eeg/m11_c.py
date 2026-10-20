@@ -392,6 +392,9 @@ def timing_job(subject, gain=None):
 
 # ---------------- main runs ----------------
 def run_arm(arm, subject, seed):
+    done = OUT / "runs" / arm / f"A{subject:02d}_s{seed}.json"  # written since the job list was made (e.g. amendment M5)
+    if done.exists():
+        r = json.loads(done.read_text()); return {k: r.get(k) for k in ("arm", "subject", "seed", "R2_15", "D_gen", "flags", "wall_s")}
     t0 = time.time(); s = settings(); gain, port, U = s.get("gain", 3.0), s.get("port", 5.0), s.get("U")
     budget, crash, lr = s.get("budget_s", OPT["budget_s"]), s.get("crash_s", OPT["crash_s"]), s.get("lr")
     name = arm
