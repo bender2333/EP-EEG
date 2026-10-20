@@ -407,7 +407,7 @@ def run_arm(arm, subject, seed):
             net = new_net(seed, port); model = Net(params(net), gain, port).fit_readout(runs[:4])
             P = net.parameters(); P["C"] = model.P["C"]; net.set_parameters(P)
             ck = OUT / "ckpt" / name / f"A{subject:02d}_s{seed}.npz"
-            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, budget, lr, ckpt=ck)
+            info["train"] = train_ep(net, model, runs, seed, U, arm == "ep_proj", gain, port, budget, lr, ckpt=ck, ckpt_every=1)
             t0 -= sum(r["elapsed_s"] for r in info["train"].get("resumed", [])[-1:])  # wall clock counts the time before a restart
         else:  # bptt_{noproj,proj}_{U,2000}, lin_bptt_2000
             parts = arm.split("_"); linear = arm.startswith("lin_"); n_upd = U if parts[-1] == "U" else int(parts[-1])
