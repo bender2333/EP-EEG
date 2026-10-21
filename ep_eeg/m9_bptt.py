@@ -33,7 +33,7 @@ class Rec(torch.nn.Module):
         return torch.stack(ys, 1)
 
 
-def one(subject, seed, opts):
+def one(subject, seed, opts, net_out=None):
     o = {**DEFAULTS, **opts}; t0 = time.time(); torch.set_num_threads(2)
     d = load_subject(subject)
     Utr, ytr = torch.tensor(inputs(d["train"]["seg"], o["ds"], o["bias"], o["gain"])), d["train"]["y"].astype(int)
@@ -74,6 +74,7 @@ def one(subject, seed, opts):
                               "kappa_val": kappa_acc(yva, pred(Uva))[0]})
             print(f"[bptt s{subject} seed{seed}] {curve[-1]}", flush=True)
     with torch.no_grad(): p = pred(Uva)
+    if net_out is not None: net_out.append(net)  # M11 B: hidden states of the trained net
     k, a = kappa_acc(yva, p)
     return {"subject": subject, "seed": seed, "kappa_val": k, "acc_val": a, "settle_rate": 1.0, "kappa_val_epoch0": k0,
             "curve": curve, "pred": p.tolist(), "y": yva.tolist(), "wall_s": time.time() - t0}

@@ -10,7 +10,7 @@
 - `docs/adr/`：已接受的设计决策及其理由。改动相关结构之前，先读对应的 ADR。agent 可以新写 `status: proposed` 的 ADR，由人在阶段门接受；推翻已有决策时，新写一条 ADR 取代它。
 - `GLOSSARY.md`：项目术语。代码、报告和 ADR 统一使用其中的规范词。
 - `docs/discussions/`：方案评审的原始讨论，共三轮：argon → Fable → argon。结论已收入 ADR。其中的示例代码针对 cadence 0.72.1 编写，有已知错误（见下文），需要按下表改写后才能使用。
-- `C:\project\cadence`（cadence-net 0.83.0，commit `6499e56`）：底层库，**只读**。所需能力在本仓库的适配层实现；cadence 的缺陷或缺失的能力，记入阶段报告的「待决问题」。该仓库有 `.codegraph/` 索引，可用 `codegraph_explore`（projectPath 设为该目录）查代码。按需阅读：
+- `C:\project\cadence`（Linux 上为 `/workspace/cadence`；cadence-net 0.84.3，muellerberndt/cadence commit `8dc92d8`，M11 修改 3 起；此前为 0.83.0、bender2333/cadence `6499e56`）：底层库，**只读**。所需能力在本仓库的适配层实现；cadence 的缺陷或缺失的能力，记入阶段报告的「待决问题」。该仓库有 `.codegraph/` 索引，可用 `codegraph_explore`（projectPath 设为该目录）查代码。按需阅读：
   - 精确签名和默认值：`docs/api.md`
   - 能量函数与学习规则：`docs/learning.md`
   - 收敛证书：`docs/certificate.md`
@@ -21,7 +21,7 @@
 
 ## cadence 事实（主线路径）
 
-主线按 [ADR-0003](docs/adr/0003-neuralgraph-not-compose.md) 的决定，直接使用 `Genome`/`Connectome`、`NeuralGraph` 和 `Learner`。下表已于 2026-10-15 对照 cadence `6499e56` 核实；cadence 更新后需要重新核实并更新本表。
+主线按 [ADR-0003](docs/adr/0003-neuralgraph-not-compose.md) 的决定，直接使用 `Genome`/`Connectome`、`NeuralGraph` 和 `Learner`。下表已于 2026-10-15 对照 cadence `6499e56` 核实，2026-10-19 对照 `8dc92d8`（0.84.3）重新核实：表中各项没有变化，0.84.3 只把 `Learner.brain` 改为经由 `GraphHolder` 读写的属性，并新增 `Learner.sharing`。cadence 更新后需要重新核实并更新本表。
 
 | 主题 | cadence 实际 | 本项目做法 |
 | --- | --- | --- |
@@ -66,7 +66,7 @@
 5. **先记账，再取舍**：向 `results.tsv` 追加一行，列为 `commit  stage  arm  kappa_val  acc_val  settle_rate  seeds  wall_s  status  description`，status 取 keep、discard 或 crash。
 6. **取舍**：如果验证 κ 的提升超过种子间的标准差，或者指标持平但代码更少，就保留（keep）；否则用 `git reset --hard` 回到上一个 keep。
 
-**台账**指 `results.tsv`，它不纳入 git 跟踪，以免被 reset 清掉。预算档位分两档：**快速档**用于筛选；**完整档**是 9 名被试 × 3 个种子，用于确认是否保留。两档的具体数值在 M0/M1 实测后写入「环境」一节。
+**台账**指 `results.tsv`。M11 起它纳入 git 跟踪（人在 2026-10-19 的 M11 指令中决定；此前不跟踪）。为了不让 reset 清掉台账，第 6 步的回退只针对代码路径（`git checkout <keep> -- <路径>`），不回退台账。预算档位分两档：**快速档**用于筛选；**完整档**是 9 名被试 × 3 个种子，用于确认是否保留。两档的具体数值在 M0/M1 实测后写入「环境」一节。
 
 ## 阶段与阶段门
 
@@ -119,13 +119,13 @@
 
 ## 环境
 
-- 运行平台：Linux（本机实测：8 CPU、约 15 GB RAM、无 NVIDIA GPU）。Windows 不是必需。
+- 运行平台：Linux（本机实测：8 CPU、约 15 GB RAM、无 NVIDIA GPU；2026-10-18 起容器重启后为 4 CPU，M10 门槛和 M11 的耗时都按 4 核计）。Windows 不是必需。
 - Python：用 uv 建 3.12 虚拟环境。已实测 Python 3.12.15。
-- 已安装并导入验证：cadence-net 0.83.0（editable，commit `6499e56`，路径 `/workspace/cadence`）、MOABB 1.7.2、Braindecode 1.8.1、scikit-learn 1.9.1、torch 2.14.1（CPU）、numba 0.68.0、mne 1.13.2。
+- 已安装并导入验证：cadence-net 0.84.3（editable，muellerberndt/cadence commit `8dc92d8`，路径 `/workspace/cadence`；M11 修改 3 之前为 0.83.0 `6499e56`）、MOABB 1.7.2、Braindecode 1.8.1、scikit-learn 1.9.1、torch 2.14.1（CPU）、numba 0.68.0、mne 1.13.2。
 - 安装命令（实测）：
   ```bash
   git clone https://github.com/bender2333/cadence.git /workspace/cadence
-  (cd /workspace/cadence && git checkout 6499e56)
+  (cd /workspace/cadence && git remote add upstream https://github.com/muellerberndt/cadence.git && git fetch upstream && git checkout 8dc92d8)
   uv venv --python 3.12 .venv
   uv pip install --python .venv/bin/python -e "/workspace/cadence[fast]" moabb==1.7.2 braindecode==1.8.1 scikit-learn==1.9.1
   export MNE_DATA=/workspace/mne_data
