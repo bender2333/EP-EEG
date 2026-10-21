@@ -8,5 +8,13 @@
  "budget_s": 14400.0,
  "crash_s": 28800.0,
  "low_power": false,
- "lr": 0.0003
+ "lr": 0.0003,
+ "g3": {
+  "U": 400,
+  "t_bar_s": 6.834657776355743,
+  "U_at_7200s": 400,
+  "budget_s": 7200.0,
+  "crash_s": 14400.0,
+  "low_power": false
+ }
 }
