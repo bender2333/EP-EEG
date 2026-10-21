@@ -77,9 +77,6 @@ def main():
         S.run_job(task, arm, seed, H=H, eta=st["eta"], tag="fix", out_dir=str(S.S1 / commit / "fix"), ckpt_dir="/workspace/m12_ckpt/S1/fix")
 
 
-if __name__ == "__main__":
-    main()
-
 
 def launch(jobfile, P=4, logname="fix"):
     """Run argv lines from `jobfile` (python -m ep_eeg.m12_s1_fix ...), at most P at once; PIDs tracked in a file."""
@@ -97,3 +94,7 @@ def launch(jobfile, P=4, logname="fix"):
         (logd / "pids.json").write_text(json.dumps({str(k): v[1] for k, v in running.items()}))
         time.sleep(5)
     print("all done", flush=True)
+
+
+if __name__ == "__main__":
+    main()
