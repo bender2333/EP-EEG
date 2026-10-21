@@ -258,3 +258,7 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 449e441	M12-S1	T2_ep_s101_fixsel_g12	NA	NA	1.0000	1	3108	done	S1 fixsel_g12 T2 ep seed 101 U=19200 eta=0.5 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	T2_ep_s101_fixsel_g14	NA	NA	1.0000	1	3114	done	S1 fixsel_g14 T2 ep seed 101 U=19200 eta=0.5 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	T2_ep_s101_fixsel_g15	NA	NA	1.0000	1	3123	done	S1 fixsel_g15 T2 ep seed 101 U=19200 eta=0.5 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g16	NA	NA	1.0000	1	3137	done	S1 fixsel_g16 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g17	NA	NA	1.0000	1	3138	done	S1 fixsel_g17 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g18	NA	NA	1.0000	1	3138	done	S1 fixsel_g18 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g19	NA	NA	1.0000	1	3147	done	S1 fixsel_g19 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
