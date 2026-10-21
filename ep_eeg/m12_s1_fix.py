@@ -63,8 +63,9 @@ def install(setting):
 
 def main():
     # python -m ep_eeg.m12_s1_fix select <task> <H|0> <grid index>   |   official <task> <arm> <seed> <H|0> <setting json>
-    C.e_seal()
-    mode = sys.argv[1]; commit = C.run_commit()
+    mode = sys.argv[1]
+    if mode == "launch": return launch(sys.argv[2], int(sys.argv[3]), sys.argv[4])
+    C.e_seal(); commit = C.run_commit()
     if mode == "select":
         task, H, gi = sys.argv[2], int(sys.argv[3]) or None, int(sys.argv[4]); beta, eta, nz, ab = GRID[gi]
         install({"beta": beta, "eta": eta, "normalize": nz, "ab": ab, "select": True, "grid_index": gi})
@@ -78,3 +79,21 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def launch(jobfile, P=4, logname="fix"):
+    """Run argv lines from `jobfile` (python -m ep_eeg.m12_s1_fix ...), at most P at once; PIDs tracked in a file."""
+    import subprocess
+    logd = Path("/workspace/m12_logs/S1") / logname; logd.mkdir(parents=True, exist_ok=True)
+    pending = [l.split() for l in Path(jobfile).read_text().splitlines() if l.strip()]; running = {}
+    while pending or running:
+        for pid, (p, nm) in list(running.items()):
+            if p.poll() is not None: print(time.strftime("%H:%M:%S"), "finished", nm, "rc", p.returncode, flush=True); running.pop(pid)
+        while pending and len(running) < P:
+            args = pending.pop(0); nm = "_".join(args[:5])
+            p = subprocess.Popen([sys.executable, "-m", "ep_eeg.m12_s1_fix", *args], stdout=open(logd / f"{nm}.log", "a"),
+                                 stderr=subprocess.STDOUT, cwd="/workspace/EP-EEG")
+            running[p.pid] = (p, nm); print(time.strftime("%H:%M:%S"), "started", nm, p.pid, flush=True)
+        (logd / "pids.json").write_text(json.dumps({str(k): v[1] for k, v in running.items()}))
+        time.sleep(5)
+    print("all done", flush=True)
