@@ -212,3 +212,6 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 449e441	M12-S1	entry_t1_continuous	NA	NA	NA	1	10	pass	S1 entry check t1_continuous (dev, (1,0.6))
 449e441	M12-S1	smoke	NA	NA	NA	1	0	done	S1 dev smoke (1,0.6) seed 100, 200 updates each; timing only
 449e441	M12-S1	T2_ep_s0_official	NA	NA	1.0000	1	2388	done	S1 official T2 ep seed 0 U=19200 eta=0.05 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s1_official	NA	NA	1.0000	1	4712	done	S1 official T2 ep seed 1 U=19200 eta=0.05 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ift_s0_official	NA	NA	1.0000	1	7475	done	S1 official T2 ift seed 0 U=19200 eta=0.05 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ift_s2_official	NA	NA	1.0000	1	7484	done	S1 official T2 ift seed 2 U=19200 eta=0.05 (verdicts only in m12_verify --stage S1)
