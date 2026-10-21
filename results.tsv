@@ -205,3 +205,8 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 53737b0	M12-S0	A3_bench	NA	NA	NA	1	244	done	A3 throughput H=512 / 1760 / batch 64 on cpu64, torch64, torch32 (8x1, 2x4); GPU not available
 53737b0	M12-S0	G0	NA	NA	NA	3	586	pending	G0 = waiting for user: prechecks, A1, A2, A3-CPU all pass; GPU untested (no GPU); U = 40847 (torch32 2x4), U_min 9720
 1cc4870	M12-S0	G0	NA	NA	NA	3	586	pass	G0 = pass, GPU waived by user (2026-10-19 23:40 UTC); S3 U = 40847 (torch f32, 2x4)
+449e441	M12-S1	entry_projection	NA	NA	NA	1	0	pass	S1 entry check projection (dev, (1,0.6))
+449e441	M12-S1	entry_single_step	NA	NA	NA	1	0	pass	S1 entry check single_step (dev, (1,0.6))
+449e441	M12-S1	entry_generators	NA	NA	NA	1	0	pass	S1 entry check generators (dev, (1,0.6))
+449e441	M12-S1	entry_t3_scale	NA	NA	NA	1	0	pass	S1 entry check t3_scale (dev, (1,0.6))
+449e441	M12-S1	entry_t1_continuous	NA	NA	NA	1	10	pass	S1 entry check t1_continuous (dev, (1,0.6))

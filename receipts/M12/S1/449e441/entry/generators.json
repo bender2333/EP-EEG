@@ -1,0 +1,116 @@
+{
+ "env": {
+  "commit": "449e44119f394acd45d14126d7686dd052a2d7a7",
+  "dirty": false,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "2",
+  "NUMBA_NUM_THREADS": "2",
+  "MKL_NUM_THREADS": "2",
+  "OPENBLAS_NUM_THREADS": "2",
+  "torch_threads": 2
+ },
+ "loadavg": [
+  0.505859375,
+  0.43212890625,
+  0.40234375
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": true,
+ "written": "2026-10-21T00:55:59",
+ "check": "generators",
+ "result": {
+  "s0": {
+   "cond": 4.926001577128186,
+   "cos_ab_true": 0.4087706769940526,
+   "draws": 1,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "06e3603b4a151061c6b5cca91ce2bcb02d96bed49bd8e21d64a17588218129cb",
+   "t1_sha": "c7446bcce4fabbd5010c5952dc5c631361e6eb24ac6268fd1b53142183fb25c5",
+   "pass": true
+  },
+  "s1": {
+   "cond": 3.6984064612386356,
+   "cos_ab_true": 0.40738951963444253,
+   "draws": 6,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "5a1c3a77ca24b7e8ea981084201d0dfcab20bb964d2b8ba60819a892a8e57fc8",
+   "t1_sha": "9d6e1e52122f979cd3d57f60b901c89715651423da397a2863fb530eb519ac18",
+   "pass": true
+  },
+  "s2": {
+   "cond": 4.131512382235684,
+   "cos_ab_true": 0.07454293417473681,
+   "draws": 1,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "af7fb816108ee732c32be51dae8ceb4c7acb9a9ba5f9c10b6a28367e9f31b871",
+   "t1_sha": "7038bc73a612ed6b1c02cdcb82c7187575772e7a6cffeb55e35dd81b9b0a386e",
+   "pass": true
+  },
+  "s100": {
+   "cond": 3.9809730464963367,
+   "cos_ab_true": 0.2874135775303266,
+   "draws": 1,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "04b88a97f5b6f0d23fb02f025e4e147b62ac1156b603ec37d82e6b362f798b57",
+   "t1_sha": "fb370202b40a0f2a1a33fed34e7d4191eca683b05fe8c74249f0572dce2800c0",
+   "pass": true
+  },
+  "s101": {
+   "cond": 3.7558336254081723,
+   "cos_ab_true": 0.3496683258150262,
+   "draws": 3,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "98a194fb591c78f3bc4e7305ce8356d46852c9ce7a9dc05cf5ece807bef3c00a",
+   "t1_sha": "592e0e6ab3f3336a66fcbd55ce01c66d92b383ffeafd0effd318d7c51e922233",
+   "pass": true
+  },
+  "s102": {
+   "cond": 5.394747792561501,
+   "cos_ab_true": 0.3805506188746418,
+   "draws": 8,
+   "balanced": true,
+   "t2_sha_reproducible": true,
+   "t1_sha_reproducible": true,
+   "t2_sha": "6f2d00a905c6a03d9d64331f04571ac41207d85e3758b173d3082094bc4e9463",
+   "t1_sha": "24a43ae6af9e22baced144a114af04db5d019d8e69ef97962070f57c482ad9fc",
+   "pass": true
+  },
+  "pass": true
+ },
+ "neuron": [
+  1.0,
+  0.6
+ ],
+ "wall_s": 0.8064405918121338
+}

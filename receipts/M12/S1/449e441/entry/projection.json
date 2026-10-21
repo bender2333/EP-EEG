@@ -1,0 +1,72 @@
+{
+ "env": {
+  "commit": "449e44119f394acd45d14126d7686dd052a2d7a7",
+  "dirty": false,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "2",
+  "NUMBA_NUM_THREADS": "2",
+  "MKL_NUM_THREADS": "2",
+  "OPENBLAS_NUM_THREADS": "2",
+  "torch_threads": 2
+ },
+ "loadavg": [
+  0.46240234375,
+  0.42236328125,
+  0.39892578125
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": true,
+ "written": "2026-10-21T00:55:57",
+ "check": "projection",
+ "result": {
+  "T1_H32": {
+   "rho_before": 1.2999999999999998,
+   "rho_after": 0.8999991,
+   "certified": true,
+   "cadence_weighted_row_mass_free": 0.8999991,
+   "inputs_unchanged": true,
+   "tie_max_diff": 0.0,
+   "pair_max_diff": 0.0,
+   "unchanged_at_0.6": true,
+   "pass": true
+  },
+  "T2": {
+   "rho_before": 1.300000000000001,
+   "rho_after": 0.8999990999999998,
+   "certified": true,
+   "cadence_weighted_row_mass_free": 0.8999990999999998,
+   "inputs_unchanged": true,
+   "tie_max_diff": 0.0,
+   "pair_max_diff": 0.0,
+   "unchanged_at_0.6": true,
+   "pass": true
+  },
+  "pass": true
+ },
+ "neuron": [
+  1.0,
+  0.6
+ ],
+ "wall_s": 0.06517958641052246
+}
