@@ -15,6 +15,7 @@
   "U_at_7200s": 400,
   "budget_s": 7200.0,
   "crash_s": 14400.0,
-  "low_power": false
+  "low_power": false,
+  "lr": 0.0003
  }
 }
