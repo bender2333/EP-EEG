@@ -242,3 +242,7 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 449e441	M12-S1	T1_randodd_H32_s0_official	NA	NA	1.0000	1	1	done	S1 official T1 randodd seed 0 U=0 eta=0.05 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	T1_ep_H8_s2_official	NA	NA	1.0000	1	112	done	S1 official T1 ep seed 2 U=19200 eta=0.05 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	G1_first_round	NA	NA	1.0000	3	10620	fail	G1 first round = fail: T1 fail ((ii) min 0.789/0.841; H8 (i) 0.884), T2 fail (kappa ratio min 0.034, m min 0.332), T3 pass (|dk| 0.004); entry checks pass; fix round next
+449e441	M12-S1	T2_ep_s101_fixsel_g0	NA	NA	1.0000	1	3970	done	S1 fixsel_g0 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g1	NA	NA	1.0000	1	3986	done	S1 fixsel_g1 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g3	NA	NA	1.0000	1	4006	done	S1 fixsel_g3 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_ep_s101_fixsel_g2	NA	NA	1.0000	1	4008	done	S1 fixsel_g2 T2 ep seed 101 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
