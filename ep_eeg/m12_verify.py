@@ -131,8 +131,8 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--commit", default=None); ap.add_argument("--stage", default="S0")
     ap.add_argument("--tag", default="official"); ap.add_argument("--eta", type=float, default=0.05); a = ap.parse_args()
     if a.stage == "S1":
-        from .m12_s1_verify import main_s1
-        return main_s1(a.commit, a.tag, a.eta)
+        from .m12_s1_verify import main_s1, main_s1_fix
+        return main_s1_fix(a.commit) if a.tag == "fix" else main_s1(a.commit, a.tag, a.eta)
     base = C.OUT / "S0"; key = a.commit
     pick = lambda sub: (base / sub / key) if key else latest(base / sub)
     unit = load_dir(pick("unit")).get("unit"); reg = load_dir(pick("regress/fork") if not key else base / "regress" / "fork" / key)

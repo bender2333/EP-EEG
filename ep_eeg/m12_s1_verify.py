@@ -46,7 +46,7 @@ def verify(recs, minit=None, eta=S.ETA, U=S.U_FULL, data_cache=None):
         get[(task, arm, H, seed)] = r
         trained = arm in ("ep", "shuffled", "ift")
         cfg = r["config"]
-        if trained and (abs(cfg["eta"] - eta) > 1e-15 or abs(cfg["eta_bias"] - eta / 10) > 1e-15): issues.append(f"{name}: eta {cfg['eta']}")
+        if eta is not None and trained and (abs(cfg["eta"] - eta) > 1e-15 or abs(cfg["eta_bias"] - eta / 10) > 1e-15): issues.append(f"{name}: eta {cfg['eta']}")
         if r["updates_attempted"] != (U if trained else 0): issues.append(f"{name}: updates attempted {r['updates_attempted']}")
         acc = np.asarray(r["accept_by_batch"])
         if len(acc) != r["updates_attempted"] or int(acc.sum()) != r["updates_accepted"]: issues.append(f"{name}: per-batch acceptance inconsistent")
@@ -85,7 +85,7 @@ def verify(recs, minit=None, eta=S.ETA, U=S.U_FULL, data_cache=None):
     for s in SEEDS:
         for a in ARMS_T2:
             if ("T2", a, None, s) not in get: issues.append(f"missing T2 {a} s{s}")
-        shas = {get[("T2", a, None, s)]["init_sha256"] for a in ARMS_T2 if ("T2", a, None, s) in get}
+        shas = {get[("T2", a, None, s)]["init_sha256"] for a in ARMS_T2 if ("T2", a, None, s) in get and not (eta is None and a == "ift")}
         if len(shas) > 1: issues.append(f"T2 s{s}: arms do not share the initial state")
     # verdicts (amendment 7 B2: least favourable value for a failed or missing seed)
     def val(task, arm, H, s, key, worst):
@@ -167,4 +167,29 @@ def main_s1(commit, tag="official", eta=S.ETA, U=S.U_FULL):
     out.write_text(json.dumps(res, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else (None if o is None else float(o))))
     print(json.dumps({"G1": t["G1"], "T1": t["T1"]["verdict"], "T2": t["T2"]["verdict"], "T3": t["T3"]["verdict"], "issues": issues[:20],
                       "tamper": st, "entry": entry}, indent=1, default=float))
+    return res
+
+
+def main_s1_fix(commit):
+    """After-fix G1: fix receipts (T1, T2 EP/random/shuffled/randodd) + first-round T2 IFT (T3 is not rerun, amendment 8).
+    Each fix receipt must carry the setting chosen in fix_selected.json; eta is checked per receipt against it."""
+    sel = json.loads((S.S1 / "fix_selected.json").read_text())
+    recs = load(S.S1 / commit / "fix")
+    recs.update({k: v for k, v in load(S.S1 / commit / "official").items() if v["arm"] == "ift"})
+    mp = S.S1 / "minit.json"; minit = json.loads(mp.read_text()) if mp.exists() else None
+    extra = []
+    for name, r in recs.items():
+        if r["arm"] == "ift": continue
+        key = r["task"] + (f"_H{r['H']}" if r.get("H") else ""); c = sel[key]["chosen"]; fs = r.get("fix_setting", {})
+        if not fs or any(abs(fs[k] - c[k]) > 1e-15 for k in ("beta", "eta", "normalize")) or fs["ab"] != c["ab"]: extra.append(f"{name}: fix setting differs from selection")
+        if r["arm"] in ("ep", "shuffled") and abs(r["config"]["eta"] - c["eta"]) > 1e-15: extra.append(f"{name}: eta differs from selection")
+    t, issues = verify(recs, minit, eta=None)
+    issues = extra + issues
+    st = tamper_selftest({k: v for k, v in recs.items()}, minit, eta=None)
+    st.pop("vi_eta", None); st["pass"] = all(v for k, v in st.items() if k != "pass")
+    if not st["pass"]: issues.append("verifier tamper self-test failed")
+    if issues: t["G1"] = "不一致"
+    res = {"table": t, "issues": issues, "tamper_selftest": st, "selection": {k: v["chosen"] for k, v in sel.items()}, "tag": "fix"}
+    (S.S1 / f"verify_{commit}_fix.json").write_text(json.dumps(res, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else (None if o is None else float(o))))
+    print(json.dumps({"G1": t["G1"], "T1": t["T1"]["verdict"], "T2": t["T2"]["verdict"], "T3": t["T3"]["verdict"], "issues": issues[:20], "tamper": st}, indent=1, default=float))
     return res
