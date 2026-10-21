@@ -210,3 +210,4 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 449e441	M12-S1	entry_generators	NA	NA	NA	1	0	pass	S1 entry check generators (dev, (1,0.6))
 449e441	M12-S1	entry_t3_scale	NA	NA	NA	1	0	pass	S1 entry check t3_scale (dev, (1,0.6))
 449e441	M12-S1	entry_t1_continuous	NA	NA	NA	1	10	pass	S1 entry check t1_continuous (dev, (1,0.6))
+449e441	M12-S1	smoke	NA	NA	NA	1	0	done	S1 dev smoke (1,0.6) seed 100, 200 updates each; timing only

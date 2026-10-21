@@ -1,0 +1,91 @@
+{
+ "env": {
+  "commit": "c2c5cefad633e12265264c1d0cb229a575588fca",
+  "dirty": false,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "2",
+  "NUMBA_NUM_THREADS": "2",
+  "MKL_NUM_THREADS": "2",
+  "OPENBLAS_NUM_THREADS": "2",
+  "torch_threads": 2
+ },
+ "loadavg": [
+  1.501953125,
+  0.705078125,
+  0.498046875
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": true,
+ "written": "2026-10-21T00:57:04",
+ "smoke": {
+  "T1_H8_ep": {
+   "t_u_median": 0.005605607002507895,
+   "t_u_mean": 0.005711580845018034,
+   "accepted": 200,
+   "updates": 200,
+   "rho_final": 0.5309189833347542,
+   "certified": true,
+   "finite": true
+  },
+  "T1_H32_ep": {
+   "t_u_median": 0.007308790503884666,
+   "t_u_mean": 0.007455929454881698,
+   "accepted": 200,
+   "updates": 200,
+   "rho_final": 0.6005393599875869,
+   "certified": true,
+   "finite": true
+  },
+  "T2_ep": {
+   "t_u_median": 0.08005992649850668,
+   "t_u_mean": 0.08131017664054525,
+   "accepted": 200,
+   "updates": 200,
+   "rho_final": 0.6002855904859368,
+   "certified": true,
+   "finite": true
+  },
+  "T2_ift": {
+   "t_u_median": 0.11592557999392739,
+   "t_u_mean": 0.11931569981490611,
+   "accepted": 200,
+   "updates": 200,
+   "rho_final": 0.600284422627814,
+   "certified": true,
+   "finite": true
+  },
+  "extrapolation": {
+   "first_round_job_hours": 4.721657014334341,
+   "first_round_wall_hours_4jobs": 1.1804142535835853,
+   "worst_fix_round_wall_hours_4jobs": 7.226986217772065,
+   "limit_hours": 168.0,
+   "over_0.6_week": false
+  }
+ },
+ "neuron": [
+  1.0,
+  0.6
+ ],
+ "seed": 100
+}
