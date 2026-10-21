@@ -411,3 +411,6 @@ dd57dcd	M11	D1_valid_ift_vs_fd	NA	NA	NA	3	90	keep	D1 validity pass (M1-11, befor
 449e441	M12-S1	T1_randodd_H32_s1_fix	NA	NA	1.0000	1	1	done	S1 fix T1 randodd seed 1 U=0 eta=0.02 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	T1_randodd_H32_s2_fix	NA	NA	1.0000	1	1	done	S1 fix T1 randodd seed 2 U=0 eta=0.02 (verdicts only in m12_verify --stage S1)
 449e441	M12-S1	T1_ep_H32_s2_fix	NA	NA	1.0000	1	156	done	S1 fix T1 ep seed 2 U=19200 eta=0.02 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_shuffled_s1_fix	NA	NA	1.0000	1	1679	done	S1 fix T2 shuffled seed 1 U=19200 eta=0.5 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	T2_shuffled_s2_fix	NA	NA	1.0000	1	1687	done	S1 fix T2 shuffled seed 2 U=19200 eta=0.5 (verdicts only in m12_verify --stage S1)
+449e441	M12-S1	G1_after_fix	NA	NA	1.0000	3	3466	fail	G1 after fix (final) = fail: T1 fail ((ii) min 0.885/0.872; (i) 0.929/0.992 pass; (iii) -0.325/0.079 pass), T2 fail (kappa ratio min 0.748 at s2; s0 0.944, s1 0.946; m min 0.999 pass; validity pass); selected T2 g13 (beta 0.01 eta 0.5 nz 0 N2), T1 H8 g38 (0.1/0.05/0.999/N1), T1 H32 g19 (0.04/0.02/0.999/N2); T3 first-round pass; stop after G1, no S2
