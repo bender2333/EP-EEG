@@ -7,13 +7,14 @@ columns are all-to-all reciprocal, 22 outlets (one per lead) are reciprocal with
 Trained by EP with a quadratic nudge to every lead's value under random hold-out masks.
 
 Arms (one receipt per subject x seed, all arms inside it so they share rows and masks):
-  lake          EP-trained lake, column states -> ridge readout fitted per pattern on train rows
-  random_lake   same initial network, no update (U = 0), same ridge readout
-  spline        spherical spline on the true positions (geometry only, nothing fitted)
-  spline_shuf   spherical spline on deranged positions (3 derangements, averaged)
-  ridge_raw     (descriptive) ridge from the visible leads' values: the linear data-driven reference
-  mean_visible  (descriptive) mean of the visible leads
-  lake_own      (descriptive) the lake's own outlets, inverse of the fixed target map, nothing fitted
+  lake_own         GATE (amendment 1): the EP-trained lake's own outlets at the hidden leads, inverse of the
+                   fixed target map 3 artanh(s / 0.5), nothing fitted
+  random_lake_own  GATE control: the same initial network's own outlets, no update (U = 0)
+  spline           GATE control: spherical spline on the true positions (geometry only, nothing fitted)
+  spline_shuf      validity: spherical spline on deranged positions (3 derangements, averaged)
+  lake, random_lake  (descriptive since amendment 1) column states -> ridge readout fitted per pattern
+  ridge_raw        (descriptive) ridge from the visible leads' values: the linear data-driven reference
+  mean_visible     (descriptive) mean of the visible leads
 Shuffled positions for the v0 lake are not a separate run: v0 reads no position, so a lake trained on
 deranged leads is the same network relabelled (proved in test_m13.py, bit for bit).
 """
@@ -149,10 +150,11 @@ def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None)
         hid = list(hid); vis = [c for c in range(C.N_LEADS) if c not in hid]
         y = Xte[:, hid]; row = {"family": fam, "hidden": hid}
         Ftr_l, _, ok_tr = lake_states(g, Xrd, hid); Fte_l, Ote_l, ok_te = lake_states(g, Xte, hid)
-        Ftr_r, _, okr_tr = lake_states(g_rand, Xrd, hid); Fte_r, _, okr_te = lake_states(g_rand, Xte, hid)
+        Ftr_r, _, okr_tr = lake_states(g_rand, Xrd, hid); Fte_r, Ote_r, okr_te = lake_states(g_rand, Xte, hid)
         p, a1 = ridge_fit_predict(Ftr_l, Xrd[:, hid], Fte_l); row["lake"] = C.r2_cols(p, y)
         p, a2 = ridge_fit_predict(Ftr_r, Xrd[:, hid], Fte_r); row["random_lake"] = C.r2_cols(p, y)
         row["lake_own"] = C.r2_cols(own_inverse(Ote_l[:, hid]), y)
+        row["random_lake_own"] = C.r2_cols(own_inverse(Ote_r[:, hid]), y)
         row["spline"] = C.r2_cols(Xte[:, vis] @ C.spline_matrix(hid).T, y)
         row["spline_shuf"] = np.mean([C.r2_cols(Xte[:, vis] @ C.spline_matrix(hid, xyz=C.XYZ[pi]).T, y) for pi in perms], 0)
         p, a3 = ridge_fit_predict(Xrd[:, vis], Xrd[:, hid], Xte[:, vis]); row["ridge_raw"] = C.r2_cols(p, y)
@@ -164,7 +166,7 @@ def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None)
         print(f"[{subject}/{seed}] {fam}{hid} lake={row['lake'].mean():.3f} rand={row['random_lake'].mean():.3f} "
               f"spline={row['spline'].mean():.3f} shuf={row['spline_shuf'].mean():.3f} raw={row['ridge_raw'].mean():.3f}", flush=True)
     summ = {}
-    for arm in ("lake", "random_lake", "spline", "spline_shuf", "ridge_raw", "mean_visible", "lake_own"):
+    for arm in ("lake", "random_lake", "spline", "spline_shuf", "ridge_raw", "mean_visible", "lake_own", "random_lake_own"):
         for fam in ("P1", "P3"):
             summ[f"{arm}_{fam}"] = float(np.mean([r[arm].mean() for r in res if r["family"] == fam]))
     rec = {"stage": "M13", "step": "E0", "subject": subject, "seed": seed, "dev": dev, "data": data["source"],

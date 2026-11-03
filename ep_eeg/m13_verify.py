@@ -4,8 +4,11 @@ python -m ep_eeg.m13_verify [--dir receipts/M13/E0/official] [--json out.json]
 Fails (verdict "inconsistent") on a missing subject or seed, a dev receipt in the input, a config
 that is not the pre-registered one, a non-finite score, an E-file match, or a summary that does not
 match the per-pattern scores. The gate itself (reports/M13.md E0.6):
-  E0-a  lake > random_lake on P3 in >= 7/9 subjects and one-sided Wilcoxon p < 0.05
-  E0-b  lake > spline      on P3 in >= 7/9 subjects and one-sided Wilcoxon p < 0.05
+  E0-a  lake_own > random_lake_own on P3 in >= 7/9 subjects and one-sided Wilcoxon p < 0.05
+  E0-b  lake_own > spline          on P3 in >= 7/9 subjects and one-sided Wilcoxon p < 0.05
+  (amendment 1, 2026-11-03, before any official run: the gate reads the lake's own outlets; the ridge
+  readouts lake / random_lake stay descriptive because a random reservoir plus ridge already reaches the
+  linear ceiling on the dev data, so they cannot show what the lake learned)
   E0-c  spline > spline_shuf on P3 in >= 8/9 subjects (validity: the task carries spatial information)
   Q     every lake and random-lake receipt qualifies >= 98% of its evaluation rows and ends certified
 Subject score = mean over seeds {0,1,2} (lakes); spline arms are deterministic.
@@ -50,13 +53,13 @@ def check(recs):
         got = [(p["family"], p["hidden"]) for p in r["patterns"]]
         if got != pats: issues.append(f"{tag}: pattern list differs from the pre-registered one")
         for p in r["patterns"]:
-            for arm in ("lake", "random_lake", "spline", "spline_shuf"):
+            for arm in ("lake_own", "random_lake_own", "spline", "spline_shuf", "lake", "random_lake"):
                 if not np.all(np.isfinite(p[arm])): issues.append(f"{tag}: non-finite {arm}")
             for q in ("qualified_lake", "qualified_random"):
                 if p[q] < 0.98: issues.append(f"{tag}: {q} {p[q]:.4f} < 0.98 on {p['hidden']}")
         if not r["train"].get("certified_end", False): issues.append(f"{tag}: not certified at the end")
         if r["train"]["accepted"] + r["train"]["refused"] != r["config"]["U"]: issues.append(f"{tag}: update count")
-        for arm in ("lake", "random_lake", "spline", "spline_shuf"):
+        for arm in ("lake_own", "random_lake_own", "spline", "spline_shuf", "lake", "random_lake"):
             for fam in ("P1", "P3"):
                 v = float(np.mean([np.mean(p[arm]) for p in r["patterns"] if p["family"] == fam]))
                 if abs(v - r["summary"][f"{arm}_{fam}"]) > 1e-9: issues.append(f"{tag}: summary {arm}_{fam} mismatch")
@@ -65,7 +68,7 @@ def check(recs):
 
 def scores(recs, fam="P3"):
     out = {}
-    for arm in ("lake", "random_lake", "spline", "spline_shuf", "ridge_raw", "mean_visible", "lake_own"):
+    for arm in ("lake_own", "random_lake_own", "spline", "spline_shuf", "lake", "random_lake", "ridge_raw", "mean_visible"):
         per = []
         for s in SUBJECTS:
             v = [np.mean([np.mean(p[arm]) for p in recs[(s, sd)]["patterns"] if p["family"] == fam]) for sd in SEEDS if (s, sd) in recs]
@@ -81,9 +84,9 @@ def verdict(recs):
     def cmp(a, b, need):
         d = np.array(sc[a]) - np.array(sc[b]); n = int((d > 0).sum()); p = wilcoxon_greater(d)
         return {"wins": n, "need": need, "p": p, "mean_diff": float(d.mean()), "pass": bool(n >= need and (p < 0.05 if need == 7 else True))}
-    g = {"E0-a lake>random_lake": cmp("lake", "random_lake", 7), "E0-b lake>spline": cmp("lake", "spline", 7),
+    g = {"E0-a lake_own>random_lake_own": cmp("lake_own", "random_lake_own", 7), "E0-b lake_own>spline": cmp("lake_own", "spline", 7),
          "E0-c spline>spline_shuf (validity)": cmp("spline", "spline_shuf", 8)}
-    seed_sd = [float(np.std([np.mean([np.mean(p["lake"]) for p in recs[(s, sd)]["patterns"] if p["family"] == "P3"]) for sd in SEEDS]))
+    seed_sd = [float(np.std([np.mean([np.mean(p["lake_own"]) for p in recs[(s, sd)]["patterns"] if p["family"] == "P3"]) for sd in SEEDS]))
                for s in SUBJECTS]
     ok = all(v["pass"] for v in g.values())
     return {"verdict": "pass" if ok else "fail", "criteria": g, "P3": sc, "P1": scores(recs, "P1"), "lake_seed_sd_P3": seed_sd, "issues": []}
@@ -93,16 +96,16 @@ def tamper_selftest(recs):
     """Each tampered copy must be flagged (inconsistent or fail)."""
     import copy
     flagged = {}
-    r = copy.deepcopy(recs); k = next(iter(r)); r[k]["patterns"][0]["lake"] = [float(x) + 0.5 for x in r[k]["patterns"][0]["lake"]]
+    r = copy.deepcopy(recs); k = next(iter(r)); r[k]["patterns"][0]["lake_own"] = [float(x) + 0.5 for x in r[k]["patterns"][0]["lake_own"]]
     flagged["summary_not_updated"] = verdict(r)["verdict"] == "inconsistent"
     r = copy.deepcopy(recs); r.pop(next(iter(r))); flagged["missing_seed"] = verdict(r)["verdict"] == "inconsistent"
     r = copy.deepcopy(recs); r[next(iter(r))]["dev"] = True; flagged["dev_receipt"] = verdict(r)["verdict"] == "inconsistent"
     r = copy.deepcopy(recs); r[next(iter(r))]["config"]["U"] = 100; flagged["config"] = verdict(r)["verdict"] == "inconsistent"
     r = copy.deepcopy(recs)
     for rr in r.values():   # make the lake identical to the random lake: E0-a must not pass
-        for p in rr["patterns"]: p["lake"] = p["random_lake"]
-        for fam in ("P1", "P3"): rr["summary"][f"lake_{fam}"] = rr["summary"][f"random_lake_{fam}"]
-    flagged["lake_equals_random"] = not verdict(r).get("criteria", {}).get("E0-a lake>random_lake", {}).get("pass", True)
+        for p in rr["patterns"]: p["lake_own"] = p["random_lake_own"]
+        for fam in ("P1", "P3"): rr["summary"][f"lake_own_{fam}"] = rr["summary"][f"random_lake_own_{fam}"]
+    flagged["lake_equals_random"] = not verdict(r).get("criteria", {}).get("E0-a lake_own>random_lake_own", {}).get("pass", True)
     return flagged
 
 
