@@ -1,0 +1,55 @@
+{
+ "env": {
+  "commit": "e511f4d6a49c93bdeae078ce37ef940e21a703af",
+  "dirty": false,
+  "cadence_commit": "8dc92d8fb8fa86afcb86b57dd199f26f2e7aed59",
+  "cadence_dirty": false,
+  "python": "3.12.3",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "scikit-learn": "1.9.1",
+   "torch": "2.14.1",
+   "mne": "1.13.2",
+   "moabb": "1.7.2",
+   "braindecode": "1.8.1",
+   "pyriemann": "0.12",
+   "cadence-net": "0.84.3",
+   "numba": "0.68.0"
+  },
+  "host_cpus": 4
+ },
+ "written": "2026-10-19T11:38:32",
+ "stage": "M11",
+ "step": "E3_diag",
+ "exploratory": true,
+ "subject": 1,
+ "seed": 2,
+ "b_res": {
+  "var6": {
+   "R2_15": 0.4889432178495817,
+   "flags": [],
+   "LSD": 0.3870849138076528,
+   "LCD": 0.7926727558359082,
+   "D_gen": 0.8015894348019392
+  },
+  "res_fit_seed": {
+   "R2_15": 0.4713064645034157,
+   "flags": [],
+   "LSD": 0.44568429527028763,
+   "LCD": 0.8812363533006069,
+   "D_gen": 0.9136459558975711
+  },
+  "res_teacher_seed": {
+   "R2_15": 0.49317176417627046,
+   "flags": [],
+   "LSD": 0.3447406160441224,
+   "LCD": 0.7451503730610141,
+   "D_gen": 0.7254867815275885
+  }
+ },
+ "wall_s": 38.632834672927856,
+ "data": {
+  "A01T.gdf": "74d900ce83a115509f663c0ac45bd36d56f05be528064743c49b0c2efb5088a3"
+ }
+}
