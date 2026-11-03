@@ -142,7 +142,7 @@ E_PATTERN = re.compile(r"A0\dE", re.I)
 
 
 def e_seal():
-    roots = [Path(os.environ.get("MNE_DATA", "/workspace/mne_data")), ROOT / "cache"]
+    roots = [Path(os.environ.get("MNE_DATA", "/workspace/mne_data")), ROOT / "cache", ROOT / "data"]
     hits = [str(p) for r in roots if r.exists() for p in r.rglob("*") if E_PATTERN.search(p.name)]
     return {"method": "filename", "roots": [str(r) for r in roots], "matches": hits}
 
