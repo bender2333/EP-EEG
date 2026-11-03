@@ -1,0 +1,111 @@
+{
+ "env": {
+  "commit": "53737b0a395aaeff393f36811709ae2ea822e4a3",
+  "dirty": true,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "1",
+  "NUMBA_NUM_THREADS": null,
+  "MKL_NUM_THREADS": "1",
+  "OPENBLAS_NUM_THREADS": "1",
+  "torch_threads": 1
+ },
+ "loadavg": [
+  1.67333984375,
+  0.8681640625,
+  0.5302734375
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": false,
+ "written": "2026-10-19T12:05:28",
+ "pytest_returncode": 0,
+ "pytest_summary": "23 passed in 2.16s",
+ "pytest_stdout": ".......................                                                  [100%]\n==================================== PASSES ====================================\n=========================== short test summary info ============================\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.25]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.5]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-1.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0--1.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[0.2-2.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[2.0--2.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-2.0]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.6]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-1e-12]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.49]\nPASSED tests/test_evenodd.py::test_lipschitz_closed_form_matches_dense_grid[1.0-0.51]\nPASSED tests/test_evenodd.py::test_lipschitz_random_parameters\nPASSED tests/test_evenodd.py::test_small_b_is_stable\nPASSED tests/test_evenodd.py::test_activation_and_slope_match_definition_and_central_difference\nPASSED tests/test_evenodd.py::test_family_validation\nPASSED tests/test_evenodd.py::test_b_zero_reproduces_the_old_tanh_path[cpu]\nPASSED tests/test_evenodd.py::test_b_zero_reproduces_the_old_tanh_path[torch]\nPASSED tests/test_evenodd.py::test_torch_matches_cpu_for_evenodd_with_linear_sources\nPASSED tests/test_evenodd.py::test_weighted_cascade_certificate\nPASSED tests/test_evenodd.py::test_linear_neuron_with_incoming_synapse_is_refused\nPASSED tests/test_evenodd.py::test_time_shared_entry_groups_and_rates\nPASSED tests/test_evenodd.py::test_tied_group_step_is_the_sum_of_member_contrasts\n23 passed in 2.16s\n",
+ "grid_check": [
+  {
+   "a": 1.0,
+   "b": 0.25,
+   "L": 0.5281529477305951,
+   "grid_max": 0.5281529477304947,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": 1.0,
+   "L": 0.7580756164910357,
+   "grid_max": 0.7580756164865754,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": 0.6,
+   "L": 0.6232162191545711,
+   "grid_max": 0.623216219132096,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": 0.0,
+   "L": 0.5,
+   "grid_max": 0.5,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": -1.0,
+   "L": 0.7580756164910357,
+   "grid_max": 0.7580756164865754,
+   "ok": true
+  },
+  {
+   "a": 0.2,
+   "b": 2.0,
+   "L": 0.8374109579573079,
+   "grid_max": 0.8374109579247054,
+   "ok": true
+  },
+  {
+   "a": 2.0,
+   "b": -2.0,
+   "L": 1.5161512329820714,
+   "grid_max": 1.5161512329731508,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": 0.49,
+   "L": 0.5896408717483362,
+   "grid_max": 0.5896408717475887,
+   "ok": true
+  },
+  {
+   "a": 1.0,
+   "b": 0.51,
+   "L": 0.5955665383906977,
+   "grid_max": 0.5955665383880505,
+   "ok": true
+  }
+ ],
+ "pass": true,
+ "wall_s": 3.134657621383667
+}

@@ -1,0 +1,86 @@
+{
+ "env": {
+  "commit": "449e44119f394acd45d14126d7686dd052a2d7a7",
+  "dirty": false,
+  "cadence_path": "/workspace/cadence",
+  "cadence_commit": "7559f0cd5303ec35f5b9469ddb025fd619142480",
+  "cadence_dirty": false,
+  "cadence_version": "0.84.3",
+  "python": "3.12.15",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "torch": "2.14.1",
+   "numba": "0.68.0",
+   "cadence-net": "0.83.0"
+  },
+  "cpu_model": "Intel(R) Xeon(R) Processor",
+  "cpus": 8
+ },
+ "threads": {
+  "OMP_NUM_THREADS": "2",
+  "NUMBA_NUM_THREADS": "2",
+  "MKL_NUM_THREADS": "2",
+  "OPENBLAS_NUM_THREADS": "2",
+  "torch_threads": 2
+ },
+ "loadavg": [
+  0.58251953125,
+  0.451171875,
+  0.4091796875
+ ],
+ "e_seal": {
+  "data_dir": "/workspace/m12_data",
+  "method": "filename+audit_hook",
+  "matches": [],
+  "hook_installed": true,
+  "hook_selftest": true
+ },
+ "dev": true,
+ "written": "2026-10-21T00:56:09",
+ "check": "t1_continuous",
+ "result": {
+  "H8_s100": {
+   "cos_ift_fd": 0.9999999999999996,
+   "cos_ep_ift": 0.9999999923666723,
+   "scale_ep_ift": 1.0005836825203562,
+   "n_params": 61
+  },
+  "H8_s101": {
+   "cos_ift_fd": 1.0000000000000002,
+   "cos_ep_ift": 0.999999994153518,
+   "scale_ep_ift": 1.0006292150639737,
+   "n_params": 61
+  },
+  "H8_s102": {
+   "cos_ift_fd": 1.0,
+   "cos_ep_ift": 0.9999999897890494,
+   "scale_ep_ift": 1.000156644848867,
+   "n_params": 61
+  },
+  "H32_s100": {
+   "cos_ift_fd": 0.9999999999999983,
+   "cos_ep_ift": 0.9999999774082984,
+   "scale_ep_ift": 1.0003480542097443,
+   "n_params": 625
+  },
+  "H32_s101": {
+   "cos_ift_fd": 0.9999999999999991,
+   "cos_ep_ift": 0.9999999376923975,
+   "scale_ep_ift": 1.000500371090755,
+   "n_params": 625
+  },
+  "H32_s102": {
+   "cos_ift_fd": 1.0,
+   "cos_ep_ift": 0.9999999830784311,
+   "scale_ep_ift": 1.0005500418083555,
+   "n_params": 625
+  },
+  "pass": true
+ },
+ "neuron": [
+  1.0,
+  0.6
+ ],
+ "wall_s": 10.121346473693848
+}
