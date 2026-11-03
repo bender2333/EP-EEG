@@ -1,0 +1,79 @@
+{
+ "env": {
+  "commit": "48321ab5511abf095f4fc195e2e9314055e79f53",
+  "dirty": false,
+  "cadence_commit": "8dc92d8fb8fa86afcb86b57dd199f26f2e7aed59",
+  "cadence_dirty": false,
+  "python": "3.12.3",
+  "versions": {
+   "numpy": "2.5.4",
+   "scipy": "1.18.1",
+   "scikit-learn": "1.9.1",
+   "torch": "2.14.1",
+   "mne": "1.13.2",
+   "moabb": "1.7.2",
+   "braindecode": "1.8.1",
+   "pyriemann": "0.12",
+   "cadence-net": "0.84.3",
+   "numba": "0.68.0"
+  },
+  "host_cpus": 4
+ },
+ "written": "2026-10-19T10:55:18",
+ "per_subject": {
+  "1": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "2": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "3": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "4": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "5": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "6": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "7": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "8": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  },
+  "9": {
+   "labels_identical": true,
+   "min_corr": 0.9999999999999998,
+   "mean_corr": 1.0,
+   "n_trials": 288
+  }
+ }
+}

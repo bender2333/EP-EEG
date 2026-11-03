@@ -31,6 +31,12 @@ for s in ${M11_STEPS:-A B D1 D2 E1 E2}; do
              --variant '[{"a_init": "orth", "opt": "adam", "proj": 0.95}, {"a_init": "orth", "opt": "adam", "proj": 0.99}]'
            G3_OUT=receipts/M11/C0 step C0refs ep_eeg.g3_toy --phase c0refs --jobs 4 ;;
     Cep)   step Cep   ep_eeg.m11_c --phase main --jobs 4 --arms ep_noproj,ep_proj ;;
+    # amendment M4: the same EP grid at gain 3 (port unchanged), with its own timing, lr, reservoir and BPTT references
+    Ctime3)   step Ctime3   ep_eeg.m11_c --phase timing_g3 --jobs 4 ;;
+    Clr3)     step Clr3     ep_eeg.m11_c --phase lrsel_g3 --jobs 4 ;;
+    Cclosed3) step Cclosed3 ep_eeg.m11_c --phase main --jobs 4 --arms res_g3 ;;
+    Cbptt3)   step Cbptt3   ep_eeg.m11_c --phase main --jobs 4 --arms bptt_noproj_U_g3,bptt_proj_U_g3,bptt_noproj_2000_g3 ;;
+    Cep3)     step Cep3     ep_eeg.m11_c --phase main --jobs 4 --arms ep_noproj_g3,ep_proj_g3 ;;
   esac
 done
 echo "[$(date +%H:%M:%S)] queue done" >> runs/${C}_m11_queue.log

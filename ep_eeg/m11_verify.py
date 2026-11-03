@@ -246,7 +246,8 @@ def wins(ep, comps, seeds=(0, 1, 2)):
 
 
 def step_c():
-    arms = ("var6", "var_best", "res", "lin_res", "ep_noproj", "ep_proj", "bptt_noproj_U", "bptt_proj_U", "bptt_noproj_2000", "bptt_proj_2000", "lin_bptt_2000")
+    arms = ("var6", "var_best", "res", "lin_res", "ep_noproj", "ep_proj", "bptt_noproj_U", "bptt_proj_U", "bptt_noproj_2000", "bptt_proj_2000", "lin_bptt_2000",
+            "res_g3", "ep_noproj_g3", "ep_proj_g3", "bptt_noproj_U_g3", "bptt_proj_U_g3", "bptt_noproj_2000_g3")  # *_g3: amendment M4
     A = {a: c_arm(a) for a in arms}; A = {a: v for a, v in A.items() if v}
     for a, v in A.items():
         miss = [(s, k) for s in SUBJ for k in (0, 1, 2) if (s, k) not in v]
@@ -255,12 +256,13 @@ def step_c():
                "D_gen": float(np.median([r["D_gen"] for r in v.values()])), "flags": sum(bool(r.get("flags")) for r in v.values()),
                "accept_mean": float(np.mean([r.get("train", {}).get("accept_rate", 1.0) for r in v.values()]))} for a, v in A.items()}
     if {"var6", "res"} <= set(A):
-        for name, group in (("EP", ("ep_noproj", "ep_proj")), ("substrate_BPTT2000", ("bptt_noproj_2000", "bptt_proj_2000"))):
+        for name, group in (("EP", ("ep_noproj", "ep_proj")), ("substrate_BPTT2000", ("bptt_noproj_2000", "bptt_proj_2000")),
+                            ("EP_g3_amendment4", ("ep_noproj_g3", "ep_proj_g3")), ("substrate_BPTT2000_g3", ("bptt_noproj_2000_g3",))):
             w = {a: wins(A[a], [A["var6"], A["res"]]) for a in group if a in A}
             out[f"verdict_{name}"] = {a: {"wins": int(sum(x)), "per_subject": x} for a, x in w.items()}
             out[f"verdict_{name}"]["holds"] = any(sum(x) >= 7 for x in w.values()) if w else None
         st = {}
-        for a in ("ep_noproj", "ep_proj"):
+        for a in ("ep_noproj", "ep_proj", "ep_noproj_g3", "ep_proj_g3"):
             if a not in A: continue
             rs = list(A[a].values()); acc = [r.get("train", {}).get("accept_rate", 0) for r in rs]
             coll = [bool(r.get("train", {}).get("curve")) and (r["train"]["curve"][-1]["mon_r2"] < max(c["mon_r2"] for c in r["train"]["curve"]) - 0.05) for r in rs]
@@ -270,6 +272,10 @@ def step_c():
             p, n = st["ep_proj"], st["ep_noproj"]
             st["projection_solves"] = bool(p["accept_ge_0.98"] >= 25 and p["n"] - p["collapsed"] >= 25 and n["violating"] >= 3)
             st["noproj_already_stable"] = bool(n["violating"] < 3)
+        if {"ep_noproj_g3", "ep_proj_g3"} <= set(st):
+            p, n = st["ep_proj_g3"], st["ep_noproj_g3"]
+            st["projection_solves_g3"] = bool(p["accept_ge_0.98"] >= 25 and p["n"] - p["collapsed"] >= 25 and n["violating"] >= 3)
+            st["noproj_already_stable_g3"] = bool(n["violating"] < 3)
         out["stability"] = st
     return out
 
