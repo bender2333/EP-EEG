@@ -19,7 +19,7 @@ Shuffled positions for the v0 lake are not a separate run: v0 reads no position,
 deranged leads is the same network relabelled (proved in test_m13.py, bit for bit).
 """
 from __future__ import annotations
-import argparse, os, sys, time, warnings
+import argparse, json, os, sys, time, warnings
 from pathlib import Path
 import numpy as np
 
@@ -33,13 +33,14 @@ N_SRC = 2 * C.N_LEADS      # [value_0..21 | hidden_0..21]
 T_SCALE = 0.5              # outlet target t = 0.5 tanh(x/3), inside N1's (-0.75, 1.25)
 U_E0, BATCH = 6000, 64     # fixed number of update attempts (pre-registered in M13 E0.4)
 ETA, BETA = S.ETA, S.BETA  # 0.05, 0.04 (M12 first-round values)
+FIX_ETAS, FIX_US, FIX_SEED = (0.02, 0.05, 0.2), (6000, 18000), 101   # E0.6 fix round grid
 EVAL_TOL = 1e-5
 ALPHAS = np.logspace(-3, 4, 15)
 OUT = C.ROOT / "receipts" / "M13" / "E0"
 
 
 # ----------------------------------------------------------------------------- lake
-def build_lake(init_seed, k=K, perm=None):
+def build_lake(init_seed, k=K, perm=None, eta=ETA):
     """perm: optional lead relabelling (lead c is wired as lead perm[c]); used only by the equivariance test."""
     rng = np.random.default_rng(init_seed)
     L = C.N_LEADS; nc = L * k; ns = N_SRC
@@ -60,7 +61,7 @@ def build_lake(init_seed, k=K, perm=None):
     pre += [P.ravel(), Q.ravel()]; post += [Q.ravel(), P.ravel()]; eff += [wo.ravel(), wo.ravel()]; ff += [np.ones(P.size, bool)] * 2
     a = np.ones(n); b = np.zeros(n)
     a[cols], b[cols] = S.NEUR["N2"]; a[outs], b[outs] = S.NEUR["N1"]
-    g = S.finish(n, ns, pre, post, eff, ff, None, a, b, out_of_lead, "quadratic", ETA, backend="cpu64")
+    g = S.finish(n, ns, pre, post, eff, ff, None, a, b, out_of_lead, "quadratic", eta, backend="cpu64")
     g.update(cols=cols, k=k, lead_slot=lead_slot)
     return g
 
@@ -83,7 +84,7 @@ def masks_for(rng, n_rows, pats):
     return M
 
 
-def train_lake(g, Xtr, seed, U=U_E0, log=print):
+def train_lake(g, Xtr, seed, U=U_E0, log=print, eta=ETA):
     pats = C.all_patterns(); stats = {"accepted": 0, "refused": 0, "projections": 0, "log": []}
     nb = len(Xtr) // BATCH; t0 = time.time(); loss = []
     for u in range(U):
@@ -93,7 +94,7 @@ def train_lake(g, Xtr, seed, U=U_E0, log=print):
         idx = perm[bi * BATCH:(bi + 1) * BATCH]
         D = drive_rows(g, Xtr[idx], M[idx]); T = target(g, Xtr[idx])
         try:
-            free, steps = S.ep_step(g, D, T, ETA)
+            free, steps = S.ep_step(g, D, T, eta)
             s = np.asarray(free.activation)[:, g["out"]]; loss.append(float(0.5 * ((s - T[:, g["out"]]) ** 2).mean()))
             stats["accepted"] += 1
         except LearningPhaseError:
@@ -131,18 +132,18 @@ def own_inverse(s):
 
 
 # ----------------------------------------------------------------------------- one job
-def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None):
+def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None, eta=ETA, split="t04_val45", mode="official"):
     t_start = time.time()
-    data = C.synth_subject(subject) if dev else C.load_real(subject)
+    data = C.synth_subject(subject) if dev else C.load_real(subject, split=split)
     Xtr = C.rows(data["train"]); Xrd = C.rows(data["train"], step=C.RIDGE_STEP); Xte = C.rows(data["test"])
     seal = C.e_seal()
     if seal["matches"]: raise RuntimeError(f"E files present: {seal['matches']}")
     init = 5000 + 100 * subject + seed
-    g_rand = build_lake(init); g = build_lake(init)
+    g_rand = build_lake(init, eta=eta); g = build_lake(init, eta=eta)
     init_sha = C.sha(np.asarray(g["lr"].brain.efficacy))
     assert init_sha == C.sha(np.asarray(g_rand["lr"].brain.efficacy))
     cert0 = S.certificate(g)
-    tr = train_lake(g, Xtr, seed, U=U, log=lambda m: print(f"[{subject}/{seed}] {m}", flush=True))
+    tr = train_lake(g, Xtr, seed, U=U, log=lambda m: print(f"[{subject}/{seed}] {m}", flush=True), eta=eta)
     pats = C.all_patterns() if quick_patterns is None else C.all_patterns()[:quick_patterns]
     perms = [C.derangement(i) for i in range(3)]
     res = []
@@ -169,10 +170,10 @@ def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None)
     for arm in ("lake", "random_lake", "spline", "spline_shuf", "ridge_raw", "mean_visible", "lake_own", "random_lake_own"):
         for fam in ("P1", "P3"):
             summ[f"{arm}_{fam}"] = float(np.mean([r[arm].mean() for r in res if r["family"] == fam]))
-    rec = {"stage": "M13", "step": "E0", "subject": subject, "seed": seed, "dev": dev, "data": data["source"],
+    rec = {"stage": "M13", "step": "E0", "mode": mode, "split": split, "subject": subject, "seed": seed, "dev": dev, "data": data["source"],
            "data_sha256": C.sha(data["train"], data["test"]), "rows": {"train": len(Xtr), "ridge": len(Xrd), "test": len(Xte)},
            "init_seed": init, "init_sha256": init_sha, "final_sha256": C.sha(np.asarray(g["lr"].brain.efficacy), np.asarray(g["lr"].brain.bias)),
-           "config": {"k": K, "U": U, "batch": BATCH, "eta": ETA, "beta": BETA, "tol": S.TOL, "eval_tol": EVAL_TOL, "cap": S.CAP,
+           "config": {"k": K, "U": U, "batch": BATCH, "eta": eta, "beta": BETA, "tol": S.TOL, "eval_tol": EVAL_TOL, "cap": S.CAP,
                       "rho0": S.RHO0, "t_scale": T_SCALE, "neurons": {"cols": S.NEUR["N2"], "out": S.NEUR["N1"]}, "alphas": ALPHAS},
            "cert_init": cert0, "train": tr, "patterns": res, "summary": summ, "e_seal": seal, "env": C.env_info(),
            "wall_s": time.time() - t_start, "finished": C.now()}
@@ -186,10 +187,26 @@ def main(argv=None):
     ap.add_argument("--subject", type=int, required=True); ap.add_argument("--seed", type=int, required=True)
     ap.add_argument("--dev", action="store_true"); ap.add_argument("--U", type=int, default=U_E0)
     ap.add_argument("--quick-patterns", type=int, default=None); ap.add_argument("--out", default=None)
+    ap.add_argument("--fix-search", nargs=2, metavar=("ETA", "U"), default=None,
+                    help="E0.6 fix round: dev split (runs 0-2 / run 3), dev seed 101, one grid point")
+    ap.add_argument("--fixed", action="store_true", help="E0.6 re-run on official seeds with fix_selected.json")
     a = ap.parse_args(argv)
-    if not a.dev and (a.U != U_E0 or a.quick_patterns is not None):
-        sys.exit("official runs use the pre-registered U and all patterns")
-    rec = run_job(a.subject, a.seed, dev=a.dev, U=a.U, out_dir=a.out, quick_patterns=a.quick_patterns)
+    if a.fix_search:
+        eta, U = float(a.fix_search[0]), int(a.fix_search[1])
+        if eta not in FIX_ETAS or U not in FIX_US or a.seed != FIX_SEED or a.dev or a.quick_patterns is not None:
+            sys.exit(f"fix search: eta in {FIX_ETAS}, U in {FIX_US}, seed {FIX_SEED}, real data, all patterns")
+        out = OUT / "fix_search" / f"eta{eta:g}_U{U}"
+        rec = run_job(a.subject, a.seed, U=U, eta=eta, split="dev_r02_r3", mode="fix_search", out_dir=out)
+    elif a.fixed:
+        sel = json.loads((OUT / "fix_selected.json").read_text())
+        if a.seed not in (0, 1, 2) or a.dev or a.quick_patterns is not None:
+            sys.exit("fixed re-run uses official seeds 0-2, real data, all patterns")
+        rec = run_job(a.subject, a.seed, U=int(sel["U"]), eta=float(sel["eta"]), mode="fixed", out_dir=OUT / "fixed")
+    else:
+        if not a.dev and (a.U != U_E0 or a.quick_patterns is not None):
+            sys.exit("official runs use the pre-registered U and all patterns")
+        rec = run_job(a.subject, a.seed, dev=a.dev, U=a.U, out_dir=a.out, quick_patterns=a.quick_patterns,
+                      mode="dev" if a.dev else "official")
     print({k: round(v, 4) for k, v in rec["summary"].items()}, f"wall {rec['wall_s']:.0f}s")
 
 

@@ -38,16 +38,16 @@ def load(dirpath):
     return recs
 
 
-def check(recs):
+def check(recs, prereg=PREREG, seeds=SEEDS):
     issues = []
     for s in SUBJECTS:
-        for sd in SEEDS:
+        for sd in seeds:
             if (s, sd) not in recs: issues.append(f"missing A{s:02d} seed {sd}")
     pats = [(f, list(t)) for f, t in C.all_patterns()]
     for (s, sd), r in recs.items():
         tag = f"A{s:02d}/s{sd}"
         if r.get("dev"): issues.append(f"{tag}: dev receipt in official input")
-        for k, v in PREREG.items():
+        for k, v in prereg.items():
             if r["config"].get(k) != v: issues.append(f"{tag}: config {k}={r['config'].get(k)} != {v}")
         if r["e_seal"]["matches"]: issues.append(f"{tag}: E files present")
         got = [(p["family"], p["hidden"]) for p in r["patterns"]]
@@ -77,8 +77,8 @@ def scores(recs, fam="P3"):
     return out
 
 
-def verdict(recs):
-    issues = check(recs)
+def verdict(recs, prereg=PREREG):
+    issues = check(recs, prereg)
     if issues: return {"verdict": "inconsistent", "issues": issues}
     sc = scores(recs, "P3")
     def cmp(a, b, need):
@@ -92,28 +92,66 @@ def verdict(recs):
     return {"verdict": "pass" if ok else "fail", "criteria": g, "P3": sc, "P1": scores(recs, "P1"), "lake_seed_sd_P3": seed_sd, "issues": []}
 
 
-def tamper_selftest(recs):
+def tamper_selftest(recs, prereg=PREREG):
     """Each tampered copy must be flagged (inconsistent or fail)."""
     import copy
     flagged = {}
     r = copy.deepcopy(recs); k = next(iter(r)); r[k]["patterns"][0]["lake_own"] = [float(x) + 0.5 for x in r[k]["patterns"][0]["lake_own"]]
-    flagged["summary_not_updated"] = verdict(r)["verdict"] == "inconsistent"
-    r = copy.deepcopy(recs); r.pop(next(iter(r))); flagged["missing_seed"] = verdict(r)["verdict"] == "inconsistent"
-    r = copy.deepcopy(recs); r[next(iter(r))]["dev"] = True; flagged["dev_receipt"] = verdict(r)["verdict"] == "inconsistent"
-    r = copy.deepcopy(recs); r[next(iter(r))]["config"]["U"] = 100; flagged["config"] = verdict(r)["verdict"] == "inconsistent"
+    flagged["summary_not_updated"] = verdict(r, prereg)["verdict"] == "inconsistent"
+    r = copy.deepcopy(recs); r.pop(next(iter(r))); flagged["missing_seed"] = verdict(r, prereg)["verdict"] == "inconsistent"
+    r = copy.deepcopy(recs); r[next(iter(r))]["dev"] = True; flagged["dev_receipt"] = verdict(r, prereg)["verdict"] == "inconsistent"
+    r = copy.deepcopy(recs); r[next(iter(r))]["config"]["U"] = 100; flagged["config"] = verdict(r, prereg)["verdict"] == "inconsistent"
     r = copy.deepcopy(recs)
     for rr in r.values():   # make the lake identical to the random lake: E0-a must not pass
         for p in rr["patterns"]: p["lake_own"] = p["random_lake_own"]
         for fam in ("P1", "P3"): rr["summary"][f"lake_own_{fam}"] = rr["summary"][f"random_lake_own_{fam}"]
-    flagged["lake_equals_random"] = not verdict(r).get("criteria", {}).get("E0-a lake_own>random_lake_own", {}).get("pass", True)
+    flagged["lake_equals_random"] = not verdict(r, prereg).get("criteria", {}).get("E0-a lake_own>random_lake_own", {}).get("pass", True)
     return flagged
 
 
+FIX_ETAS, FIX_US, FIX_SEED = (0.02, 0.05, 0.2), (6000, 18000), 101
+
+
+def select_fix(base):
+    """E0.6 + amendment 3: pick (eta, U) by the subject mean of P3 lake_own - random_lake_own on the dev
+    split, seed 101; within 0.005 of the best take the smaller U, then the smaller eta."""
+    grid, issues = {}, []
+    for eta in FIX_ETAS:
+        for U in FIX_US:
+            recs = load(Path(base) / "fix_search" / f"eta{eta:g}_U{U}")
+            iss = check(recs, {**PREREG, "eta": eta, "U": U}, seeds=(FIX_SEED,))
+            iss += [f"eta{eta:g}_U{U} A{s:02d}: split {r.get('split')}" for (s, _), r in recs.items() if r.get("split") != "dev_r02_r3"]
+            issues += [f"eta{eta:g}_U{U}: {i}" for i in iss]
+            if not iss:
+                sc = scores({(s, 0): r for (s, _), r in recs.items()}, "P3")
+                d = np.array(sc["lake_own"]) - np.array(sc["random_lake_own"])
+                grid[f"eta{eta:g}_U{U}"] = {"eta": eta, "U": U, "mean_diff": float(d.mean()), "wins": int((d > 0).sum()),
+                                            "lake_own": float(np.mean(sc["lake_own"])), "spline": float(np.mean(sc["spline"]))}
+    if issues: return {"selected": None, "issues": issues, "grid": grid}
+    best = max(v["mean_diff"] for v in grid.values())
+    near = [v for v in grid.values() if v["mean_diff"] >= best - 0.005]
+    sel = sorted(near, key=lambda v: (v["U"], v["eta"]))[0]
+    return {"selected": {"eta": sel["eta"], "U": sel["U"]}, "rule": "max subject-mean P3 lake_own-random_lake_own; ties within 0.005 -> smaller U, smaller eta",
+            "grid": grid, "issues": []}
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(); ap.add_argument("--dir", default=str(C.ROOT / "receipts/M13/E0/official"))
-    ap.add_argument("--json", default=None); a = ap.parse_args(argv)
-    recs = load(a.dir); v = verdict(recs)
-    if v["verdict"] != "inconsistent": v["tamper"] = tamper_selftest(recs)
+    ap = argparse.ArgumentParser(); ap.add_argument("--dir", default=None)
+    ap.add_argument("--json", default=None)
+    ap.add_argument("--select-fix", action="store_true", help="E0.6: choose the fix-round setting, write fix_selected.json")
+    ap.add_argument("--fixed", action="store_true", help="verify the fixed re-run against fix_selected.json")
+    a = ap.parse_args(argv)
+    base = C.ROOT / "receipts/M13/E0"
+    if a.select_fix:
+        v = select_fix(base); txt = json.dumps(v, indent=1, ensure_ascii=False); print(txt)
+        if v["selected"]: (base / "fix_selected.json").write_text(json.dumps({**v["selected"], "written": C.now(), "selection": v}, indent=1))
+        sys.exit(0 if v["selected"] else 1)
+    prereg = PREREG
+    if a.fixed:
+        sel = json.loads((base / "fix_selected.json").read_text()); prereg = {**PREREG, "eta": sel["eta"], "U": sel["U"]}
+    recs = load(a.dir or (base / ("fixed" if a.fixed else "official"))); v = verdict(recs, prereg)
+    if a.fixed: v["label"] = "修后 (after the E0.6 fix round)"
+    if v["verdict"] != "inconsistent": v["tamper"] = tamper_selftest(recs, prereg)
     txt = json.dumps(v, indent=1, ensure_ascii=False); print(txt)
     if a.json: Path(a.json).write_text(txt)
     sys.exit(0 if v["verdict"] in ("pass", "fail") else 1)

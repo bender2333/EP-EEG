@@ -96,11 +96,20 @@ def rows(seg, step=STEP, offset=0):
     return np.ascontiguousarray(seg[:, :, offset::step].transpose(0, 2, 1).reshape(-1, seg.shape[1]))
 
 
-def load_real(subject):
+def load_real(subject, split="t04_val45"):
+    """t04_val45 (official): train runs 0-3, test runs 4-5.  dev_r02_r3 (E0.6 fix round): of the
+    run 0-3 training trials (run order, 48 per run), train on runs 0-2 and test on run 3; runs 4-5 unused.
+    Normalisation statistics are the frozen layer's (fit on runs 0-3) in both cases."""
     from ep_eeg.data import load_subject
     d = load_subject(subject)
-    return {"train": d["train"]["seg"].astype(np.float64), "test": d["val"]["seg"].astype(np.float64),
-            "source": f"A{subject:02d}T runs 0-3 / 4-5 (frozen eval layer)"}
+    tr = d["train"]["seg"].astype(np.float64)
+    if split == "t04_val45":
+        return {"train": tr, "test": d["val"]["seg"].astype(np.float64),
+                "source": f"A{subject:02d}T runs 0-3 / 4-5 (frozen eval layer)"}
+    if split == "dev_r02_r3":
+        assert len(tr) == 192
+        return {"train": tr[:144], "test": tr[144:], "source": f"A{subject:02d}T runs 0-2 / 3 (E0.6 dev split)"}
+    raise ValueError(split)
 
 
 def synth_subject(seed, n_train=192, n_test=96, n_src=40, noise=0.1):
