@@ -84,10 +84,25 @@ def masks_for(rng, n_rows, pats):
     return M
 
 
-def train_lake(g, Xtr, seed, U=U_E0, log=print, eta=ETA):
-    pats = C.all_patterns(); stats = {"accepted": 0, "refused": 0, "projections": 0, "log": []}
-    nb = len(Xtr) // BATCH; t0 = time.time(); loss = []
-    for u in range(U):
+def _save_ckpt(path, g, u, stats, loss):
+    """Atomic checkpoint every 200 updates (weights + counters). The learner has no momentum or decay and
+    every phase settles from rest, so resuming from weights reproduces the uninterrupted run exactly."""
+    path.parent.mkdir(parents=True, exist_ok=True); tmp = path.with_suffix(".tmp.npz")
+    np.savez(tmp, eff=np.asarray(g["lr"].brain.efficacy, float), bias=np.asarray(g["lr"].brain.bias, float), u=u,
+             loss=np.asarray(loss, float), stats=json.dumps(stats))
+    tmp.replace(path)
+
+
+def train_lake(g, Xtr, seed, U=U_E0, log=print, eta=ETA, ckpt=None):
+    pats = C.all_patterns(); stats = {"accepted": 0, "refused": 0, "projections": 0, "log": [], "resumed_at": []}
+    nb = len(Xtr) // BATCH; t0 = time.time(); loss = []; u0 = 0
+    if ckpt is not None and Path(ckpt).exists():
+        z = np.load(ckpt, allow_pickle=False)
+        S.set_params(g["lr"], z["eff"], z["bias"]); u0 = int(z["u"]); loss = list(z["loss"])
+        stats = json.loads(str(z["stats"])); stats.setdefault("resumed_at", []).append(u0)
+        t0 -= stats["log"][-1]["t"] if stats["log"] else 0.0
+        log(f"resumed at u={u0}")
+    for u in range(u0, U):
         ep, bi = divmod(u, nb)
         rng = np.random.default_rng((4000 + seed) * 100003 + ep)
         perm = rng.permutation(len(Xtr)); M = masks_for(rng, len(Xtr), pats)
@@ -106,6 +121,7 @@ def train_lake(g, Xtr, seed, U=U_E0, log=print, eta=ETA):
             stats["log"].append({"u": u + 1, "loss": float(np.mean(loss)) if loss else None, "rho": S.rho(g),
                                  "certified": bool(cc["certified"]), "t": time.time() - t0}); loss = []
             log(f"u={u + 1} loss={stats['log'][-1]['loss']} rho={stats['log'][-1]['rho']:.3f} refused={stats['refused']}")
+            if ckpt is not None: _save_ckpt(Path(ckpt), g, u + 1, stats, loss)
     stats["wall_s"] = time.time() - t0; stats["certified_end"] = bool(S.certificate(g)["certified"])
     return stats
 
@@ -143,7 +159,10 @@ def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None,
     init_sha = C.sha(np.asarray(g["lr"].brain.efficacy))
     assert init_sha == C.sha(np.asarray(g_rand["lr"].brain.efficacy))
     cert0 = S.certificate(g)
-    tr = train_lake(g, Xtr, seed, U=U, log=lambda m: print(f"[{subject}/{seed}] {m}", flush=True), eta=eta)
+    out_dir = Path(out_dir or (OUT / ("dev" if dev else "official")))
+    ckpt = OUT / "ckpt" / out_dir.relative_to(OUT).as_posix().replace("/", "__") / f"{subject:02d}_s{seed}_eta{eta:g}_U{U}_{init_sha[:12]}.npz" \
+        if out_dir.is_relative_to(OUT) else None
+    tr = train_lake(g, Xtr, seed, U=U, log=lambda m: print(f"[{subject}/{seed}] {m}", flush=True), eta=eta, ckpt=ckpt)
     pats = C.all_patterns() if quick_patterns is None else C.all_patterns()[:quick_patterns]
     perms = [C.derangement(i) for i in range(3)]
     res = []
@@ -177,7 +196,6 @@ def run_job(subject, seed, dev=False, U=U_E0, out_dir=None, quick_patterns=None,
                       "rho0": S.RHO0, "t_scale": T_SCALE, "neurons": {"cols": S.NEUR["N2"], "out": S.NEUR["N1"]}, "alphas": ALPHAS},
            "cert_init": cert0, "train": tr, "patterns": res, "summary": summ, "e_seal": seal, "env": C.env_info(),
            "wall_s": time.time() - t_start, "finished": C.now()}
-    out_dir = Path(out_dir or (OUT / ("dev" if dev else "official")))
     C.write_receipt(out_dir / f"{'S' if dev else 'A'}{subject:02d}_s{seed}.json", rec)
     return rec
 
