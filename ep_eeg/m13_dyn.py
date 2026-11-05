@@ -178,6 +178,20 @@ def run_job(subject, seed, arm, cfg, split="test", random=False, derange=None, f
             "wall_s": time.time() - t0, "finished": C.now()}
 
 
+def spectrum(subject, seed, arm, cfg, seconds=10.0, batch=8, rng_seed=0):
+    """Outlet response to white-noise input (all leads visible, iid N(0,1) z per 4 ms sample through tanh(z/3)).
+    Returns (freqs, mean outlet PSD, peak frequency in 1-60 Hz). Untrained lakes are not used."""
+    from scipy.signal import welch
+    g, _ = load_lake(subject, seed)
+    lake = dynamics(g, arm, cfg)
+    T = int(seconds * 250); rng = np.random.default_rng(rng_seed)
+    D = np.zeros((T, batch, g["ns"])); D[:, :, :C.N_LEADS] = np.tanh(rng.normal(size=(T, batch, C.N_LEADS)) / 3.0)
+    out = lake.run(D, SUB, g["out"], every=1)[250:]                  # drop the first second
+    f, P = welch(out, fs=250.0, nperseg=500, axis=0)
+    P = P.mean(axis=(1, 2)); band = (f >= 1) & (f <= 60)
+    return f, P, float(f[band][np.argmax(P[band])])
+
+
 def job_name(subject, seed, arm, cfg, random=False, derange=None):
     tag = "_".join(f"{k}{v}" for k, v in sorted(cfg.items()))
     return f"A{subject:02d}_s{seed}_{arm}{'_' + tag if tag else ''}{'_rand' if random else ''}" \
