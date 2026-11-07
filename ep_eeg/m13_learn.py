@@ -55,9 +55,10 @@ def field_matrix(ell=ELL, lam=LAM, perm=None):
     return Q
 
 
-def build(subject, seed, cond, ell=ELL, lam=LAM, eta=E.ETA, der=0):
-    """v0 lake of (subject, seed) from its E0 checkpoint, plus the fixed field synapses for cond."""
-    g0, init_sha = M.load_lake(subject, seed)
+def build(subject, seed, cond, ell=ELL, lam=LAM, eta=E.ETA, der=0, trained=True):
+    """v0 lake of (subject, seed) from its E0 checkpoint (trained=False: the untrained E0 initial lake), plus the
+    fixed field synapses for cond."""
+    g0, init_sha = M.load_lake(subject, seed, trained=trained)
     c0 = g0["conn"]; eff0 = np.asarray(g0["lr"].brain.efficacy, float); bias0 = np.asarray(g0["lr"].brain.bias, float)
     ff0 = np.asarray(g0["ff"], bool); out = np.asarray(g0["out"]); n, ns = g0["n"], g0["ns"]
     pre, post, eff, ff, fx = [c0.pre], [c0.post], [eff0], [ff0], [np.zeros(len(eff0), bool)]
