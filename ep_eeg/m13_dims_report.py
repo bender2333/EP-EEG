@@ -60,7 +60,8 @@ def run(kinds):
             rv = {s: float(np.mean([A[s][f"{pre}_{ref}_{m}"] for m in MI])) for s in SUBJ}
             row.setdefault(pre, {"mean": round(float(np.mean(list(lv.values()))), 4)})[f"vs_{ref}"] = cmp(lv, rv)
         res["lakes"][k] = row
-    for a_, b_ in (("C", "v0"), ("L_field", "v0"), ("L_field", "C"), ("L_field", "L_none")):
+    for a_, b_ in (("C", "v0"), ("L_field", "v0"), ("L_field", "C"), ("L_field", "L_none"), ("T_none", "v0"), ("T_none", "L_none"),
+                   ("T_osc", "T_none"), ("T_osc", "v0")):
         if a_ in res["lakes"] and b_ in res["lakes"]:
             La, Lb = lake(a_), lake(b_)
             res.setdefault("pairs", {})[f"{a_}>{b_}"] = {d: cmp(col(La, f"lake_{d}"), col(Lb, f"lake_{d}")) for d in DIMS}

@@ -275,7 +275,7 @@ def main(argv=None):
         path = OUT / "audit" / f"A{a.subject:02d}.json"
         rec = audit(a.subject)
     else:
-        tag = a.lake.replace(":", "_").replace("A{subject:02d}_s{seed}_", "").replace("{subject:02d}", "").replace("{seed}", "")
+        tag = a.lake.replace("A{subject:02d}_s{seed}_", "").replace("{subject:02d}", "").replace("{seed}", "").replace(":", "_")
         path = OUT / "lake" / f"A{a.subject:02d}_s{a.seed}_{tag}.json"
         rec = lake_job(a.lake, a.subject, a.seed)
     rec["wall_s"] = time.time() - t0
