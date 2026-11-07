@@ -117,13 +117,17 @@ def spatial_diag(pred, Xvis, hid, vis):
     return cos, rho
 
 
-def run_job(subject, seed, arm, cfg, split="test", random=False, derange=None, families=("P3",), n_trials=None):
+def run_job(subject, seed, arm, cfg, split="test", random=False, derange=None, families=("P3",), n_trials=None, lake_g=None):
+    """lake_g: evaluate this already-built lake (M13 4.5 re-learnt lakes) instead of loading the E0 checkpoint."""
     t0 = time.time()
     data = C.load_real(subject, split="t04_val45" if split == "test" else "dev_r02_r3")
     seal = C.e_seal()
     if seal["matches"]: raise RuntimeError(f"E files present: {seal['matches']}")
     seg = data["test"] if n_trials is None else data["test"][:n_trials]
-    g, init_sha = load_lake(subject, seed, trained=not random)
+    if lake_g is None:
+        g, init_sha = load_lake(subject, seed, trained=not random)
+    else:
+        g, init_sha = lake_g, None
     perm = None if derange is None else C.derangement(derange)
     lake = dynamics(g, arm, cfg, perm=perm)
     feed = envelope(seg) if arm == "power" else seg                # (trials, 22, 750)
