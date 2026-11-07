@@ -48,11 +48,17 @@ EVAL_AT = (500, 1000, 2000)
 
 # ----------------------------------------------------------------------------- the lake as arrays
 class Arr:
-    def __init__(self, g):
+    def __init__(self, g, zeta=None):
         b = g["lr"].brain
         self.W = np.asarray(b.dense(), float); self.b = np.asarray(b.bias, float); self.model = b.neuron_model
         self.n = g["n"]; self.ns = g["ns"]; self.out = np.asarray(g["out"])
         self.free = np.arange(self.ns, self.n)
+        # §7: columns get a velocity partner (m13_dyn's ``inert`` arm, InertialLake): u <- u + dt(-k r - gamma u),
+        # v <- v + dt u on the columns; every other free neuron first order. The rotation (k, gamma) is fixed.
+        self.zeta = zeta
+        self.I = np.asarray(g["cols"], int) if zeta is not None else np.zeros(0, int)
+        self.aF = np.zeros(self.n); self.aF[self.ns:] = A; self.aF[self.I] = 0.0
+        self.k = (2 * np.pi * M.F0) ** 2; self.gamma = 2 * (zeta or 0.0) * 2 * np.pi * M.F0
 
     def act(self, v): return self.model.activation(v)
     def slope(self, v): return self.model.slope_at(v)
@@ -76,45 +82,69 @@ def windows(rng, seg, n):
 
 
 def forward(L, D, tgt=None, beta=0.0, keep=False, v0=None, shift=0):
-    """Returns (reads (T,B,22), list of pre-substep states if keep, loss, contrast accumulators if beta != 0)."""
+    """Returns (reads (T,B,22), list of pre-substep (v, u) if keep, loss, contrast accumulators if beta != 0)."""
     T, B, _ = D.shape
-    v = L.rest(D[0]) if v0 is None else v0.copy()
+    v = L.rest(D[0]) if v0 is None else v0.copy(); u = np.zeros((B, L.I.size))
     reads, hist = [], []; loss = 0.0; nl = 0
     cW = np.zeros_like(L.W) if beta else None; cb = np.zeros(L.n) if beta else None
+    dt = M.DT
     for t in range(T):
         v[:, :L.ns] = D[t]
         s = L.act(v); y = s[:, L.out]; reads.append(y)
         if tgt is not None and t >= BURN:
             loss += 0.5 * ((y - tgt[t]) ** 2).sum(1).mean(); nl += 1
         for _ in range(SUB):
-            if keep: hist.append(v.copy())
+            if keep: hist.append((v.copy(), u.copy()))
             s = L.act(v); r = v - s @ L.W - L.b
             if beta:
+                if L.I.size: raise NotImplementedError("tep with oscillators")
                 tn = min(t + shift, T - 1)
                 r[:, L.out] += beta * (s[:, L.out] - tgt[tn])
                 if tn >= BURN:
                     cW += A * (s.T @ s) / B; cb += A * s.mean(0)
-            r[:, :L.ns] = 0.0; v = v - A * r
+            r[:, :L.ns] = 0.0
+            if L.I.size:
+                u = u + dt * (-L.k * r[:, L.I] - L.gamma * u)
+                v = v - L.aF * r; v[:, L.I] += dt * u
+            else:
+                v = v - A * r
     return np.stack(reads), hist, (loss / max(nl, 1)), (cW, cb)
 
 
 def bptt(L, D, tgt):
-    """Exact gradient of the window loss: dL/dW (dense, [pre,post]) and dL/db. Initial rest state: no gradient."""
+    """Exact gradient of the window loss: dL/dW (dense, [pre,post]) and dL/db. Initial rest state: no gradient.
+
+    Per substep (r = v - s(v) W - b, zero on sources): first-order free neurons v' = v - a r; columns (§7)
+    u' = (1 - dt gamma) u - dt k r, v' = v + dt u'. With m = -dL/dr (m_F = a lv_F, m_I = dt k lu_tot,
+    lu_tot = lu + dt lv_I): dL/dW += s^T m, dL/db += sum m, lv <- lv - m + s'(v) (m W^T), lu <- (1 - dt gamma) lu_tot.
+    """
     T, B, _ = D.shape
     reads, hist, loss, _ = forward(L, D, tgt, keep=True)
     nl = T - BURN; gW = np.zeros_like(L.W); gb = np.zeros(L.n)
-    mu = np.zeros((B, L.n)); Wf = L.W.copy(); Wf[:, :L.ns] = 0.0          # only free posts move
+    lv = np.zeros((B, L.n)); lu = np.zeros((B, L.I.size)); dt = M.DT
     for t in range(T - 1, -1, -1):
         for k in range(SUB - 1, -1, -1):
-            v = hist[t * SUB + k]; s = L.act(v); sp = L.slope(v)
-            mf = mu.copy(); mf[:, :L.ns] = 0.0
-            gW += A * (s.T @ mf); gb += A * mf.sum(0)
-            mu = (1 - A) * mf + A * sp * (mf @ Wf.T)
-            mu[:, :L.ns] = 0.0
+            v, _ = hist[t * SUB + k]; s = L.act(v); sp = L.slope(v)
+            lv[:, :L.ns] = 0.0
+            m = L.aF * lv
+            if L.I.size:
+                lut = lu + dt * lv[:, L.I]; m[:, L.I] = dt * L.k * lut; lu = (1 - dt * L.gamma) * lut
+            gW += s.T @ m; gb += m.sum(0)
+            lv = lv - m + sp * (m @ L.W.T)
+            lv[:, :L.ns] = 0.0
         if t >= BURN:                                                   # read at t: before the substeps of t
-            v = hist[t * SUB]; sp = L.slope(v)
-            mu[:, L.out] += (reads[t] - tgt[t]) * sp[:, L.out] / (B * nl)
-        mu[:, :L.ns] = 0.0
+            v, _ = hist[t * SUB]; sp = L.slope(v)
+            lv[:, L.out] += (reads[t] - tgt[t]) * sp[:, L.out] / (B * nl)
+        lv[:, :L.ns] = 0.0
+    # the trial starts at the static rest state of D[0] (r(v0) = 0 on the free neurons), which depends on W, b:
+    # implicit-function term, nu - s'(v0)(nu W^T) = lv on the free neurons, then m = nu as above. Zero to ~1e-12 for
+    # the first-order lake (its rest state is forgotten by the loss samples); a few % of the gradient with columns.
+    v, _ = hist[0]; s = L.act(v); sp = L.slope(v); nu = lv.copy()
+    for _ in range(2000):
+        nn = lv + sp * (nu @ L.W.T); nn[:, :L.ns] = 0.0
+        if np.abs(nn - nu).max() < 1e-14 * (1 + np.abs(nu).max()): nu = nn; break
+        nu = nn
+    gW += s.T @ nu; gb += nu.sum(0)
     return gW, gb, loss
 
 
@@ -185,13 +215,38 @@ def check(subject, seed, n_batches=8, beta=BETA):
             "static_limit": static, "finite_diff": fd, "e_seal": seal, "env": C.env_info(), "finished": C.now()}
 
 
+def check_osc(subject, seed, zetas=(0.2, 0.5, 1.0)):
+    """§7 sanity: the trained-on trajectory is the eval's (InertialLake.run, inert arm) and bptt matches finite
+    differences (rest state included), on 4 training windows of the route-1 start lake."""
+    data = C.load_real(subject, split="dev_r02_r3"); seal = C.e_seal()
+    if seal["matches"]: raise RuntimeError("E files present")
+    g, _ = Lm.build(subject, seed, "none"); rng = np.random.default_rng(888 + subject)
+    D, tg = windows(rng, data["train"], 4); c = g["conn"]
+    pl = np.nonzero((~g["fx"]) & (c.post >= g["ns"]) & (c.pre >= g["ns"]))[0]; picks = rng.choice(pl, 6, replace=False)
+    out = {}
+    for z in zetas:
+        L = Arr(g, z); reads = forward(L, D)[0]
+        ref = M.dynamics(g, "inert", {"zeta": z}).run(D, M.SUB, g["out"], every=1)
+        gW, gb, _ = bptt(L, D, tg); fd = []
+        for e in picks:
+            i, j = c.pre[e], c.post[e]; h = 1e-5
+            Lp = Arr(g, z); Lp.W = L.W.copy(); Lp.W[i, j] += h; Lp.W[j, i] += h
+            Lq = Arr(g, z); Lq.W = L.W.copy(); Lq.W[i, j] -= h; Lq.W[j, i] -= h
+            fd.append({"fd": (forward(Lp, D, tg)[2] - forward(Lq, D, tg)[2]) / (2 * h), "bptt": float(gW[i, j] + gW[j, i])})
+        rel = max(abs(x["fd"] - x["bptt"]) / (abs(x["fd"]) + 1e-12) for x in fd)
+        out[f"{z:g}"] = {"reads_vs_eval_maxabs": float(np.abs(reads - ref).max()), "fd": fd, "fd_max_rel_err": float(rel)}
+    return {"stage": "M13", "step": "4.5-osc-check", "subject": subject, "seed": seed, "zetas": out,
+            "summary": {z: {"reads": v["reads_vs_eval_maxabs"], "fd_rel": v["fd_max_rel_err"]} for z, v in out.items()},
+            "e_seal": seal, "env": C.env_info(), "finished": C.now()}
+
+
 # ----------------------------------------------------------------------------- training
-def train(g, seg, seed, U, rule, eta, log=print, on_eval=None):
-    stats = {"rule": rule, "eta": eta, "log": [], "projections": 0}
+def train(g, seg, seed, U, rule, eta, log=print, on_eval=None, zeta=None):
+    stats = {"rule": rule, "eta": eta, "zeta": zeta, "log": [], "projections": 0}
     t0 = time.time(); loss = []
     for u in range(U):
         rng = np.random.default_rng((6000 + seed) * 100003 + u)
-        D, tg = windows(rng, seg, BATCH); L = Arr(g)
+        D, tg = windows(rng, seg, BATCH); L = Arr(g, zeta)
         if rule == "bptt":
             gW, gb, l = bptt(L, D, tg)
         else:
@@ -210,8 +265,10 @@ def train(g, seg, seed, U, rule, eta, log=print, on_eval=None):
     return stats
 
 
-def evaluate(g, subject, split, static=True):
-    r = {"dyn1": M.run_job(subject, 0, "dyn1", {}, split=split, lake_g=g)}
+def evaluate(g, subject, split, static=True, zeta=None):
+    """dyn1 (first order) or, with zeta (§7), the inert arm: the same dynamics the lake was trained on."""
+    r = {"dyn1": M.run_job(subject, 0, "dyn1", {}, split=split, lake_g=g) if zeta is None else
+         M.run_job(subject, 0, "inert", {"zeta": zeta}, split=split, lake_g=g)}
     if static: r["static"] = M.run_job(subject, 0, "static", {}, split=split, lake_g=g)
     return r
 
@@ -222,20 +279,20 @@ def summ(ev):
     return out
 
 
-def run(subject, seed, cond, split, U, rule, eta, ell=0.03, lam=0.5, der=0):
+def run(subject, seed, cond, split, U, rule, eta, ell=0.03, lam=0.5, der=0, zeta=None):
     t0 = time.time()
     data = C.load_real(subject, split="t04_val45" if split == "test" else "dev_r02_r3")
     seal = C.e_seal()
     if seal["matches"]: raise RuntimeError(f"E files present: {seal['matches']}")
     g, init_sha = Lm.build(subject, seed, cond, ell, lam, der=der)
-    evals = {0: summ(evaluate(g, subject, split))}
+    evals = {0: summ(evaluate(g, subject, split, zeta=zeta))}
     def on_eval(u):
-        evals[u] = summ(evaluate(g, subject, split, static=False))
+        evals[u] = summ(evaluate(g, subject, split, static=False, zeta=zeta))
         print(f"[{subject}/{seed}/{cond}] eval u={u} dyn1 {evals[u]['dyn1_lake_own_P3']:.4f}", flush=True)
-    tr = train(g, data["train"], seed, U, rule, eta, log=lambda m: print(f"[{subject}/{seed}/{cond}] {m}", flush=True), on_eval=on_eval)
-    final = evaluate(g, subject, split)
+    tr = train(g, data["train"], seed, U, rule, eta, log=lambda m: print(f"[{subject}/{seed}/{cond}] {m}", flush=True), on_eval=on_eval, zeta=zeta)
+    final = evaluate(g, subject, split, zeta=zeta)
     return {"stage": "M13", "step": "4.5-route2", "cond": cond, "split": split, "subject": subject, "seed": seed, "U": U,
-            "rule": rule, "eta": eta, "window": {"WIN": WIN, "BURN": BURN, "BATCH": BATCH, "a": A, "sub": SUB},
+            "rule": rule, "eta": eta, "zeta": zeta, "dyn": "inert" if zeta is not None else "dyn1", "window": {"WIN": WIN, "BURN": BURN, "BATCH": BATCH, "a": A, "sub": SUB},
             "field": {"ell": ell, "lam": lam, "derangement": der if cond == "der" else None},
             "data": data["source"], "init_sha256": init_sha,
             "final_sha256": C.sha(np.asarray(g["lr"].brain.efficacy), np.asarray(g["lr"].brain.bias)),
@@ -244,9 +301,9 @@ def run(subject, seed, cond, split, U, rule, eta, ell=0.03, lam=0.5, der=0):
             "finished": C.now()}, g
 
 
-def tag(cond, rule, eta, U, ell, lam, der):
+def tag(cond, rule, eta, U, ell, lam, der, zeta=None):
     f = "none" if cond == "none" else f"{cond}{der if cond == 'der' else ''}_ell{ell:g}_lam{lam:g}"
-    return f"{f}_{rule}_eta{eta:g}_U{U}"
+    return ("" if zeta is None else f"osc{zeta:g}_") + f"{f}_{rule}_eta{eta:g}_U{U}"
 
 
 def main(argv=None):
@@ -257,16 +314,23 @@ def main(argv=None):
     ap.add_argument("--split", default="dev", choices=["dev", "test"]); ap.add_argument("--U", type=int, default=2000)
     ap.add_argument("--rule", default="bptt", choices=["bptt", "tep"]); ap.add_argument("--eta", type=float, default=0.05)
     ap.add_argument("--ell", type=float, default=0.03); ap.add_argument("--lam", type=float, default=0.5)
+    ap.add_argument("--zeta", type=float, default=None, help="§7: second-order columns, f0 = 10 Hz, this damping ratio")
+    ap.add_argument("--check-osc", action="store_true")
     a = ap.parse_args(argv)
     if a.check:
         rec = check(a.subject, a.seed); path = OUT / "check" / f"A{a.subject:02d}_s{a.seed}.json"
         C.write_receipt(path, rec)
         print(path.name, rec["median_cos_w"], json.dumps(rec["static_limit"]), json.dumps(rec["finite_diff"][:2]), flush=True)
         return
-    t = tag(a.cond, a.rule, a.eta, a.U, a.ell, a.lam, a.der)
+    if a.check_osc:
+        rec = check_osc(a.subject, a.seed); path = OUT / "check" / f"A{a.subject:02d}_s{a.seed}_osc.json"
+        C.write_receipt(path, rec); print(path.name, json.dumps(rec["summary"]), flush=True)
+        return
+    if a.zeta is not None and a.rule != "bptt": raise SystemExit("§7 trains with bptt only")
+    t = tag(a.cond, a.rule, a.eta, a.U, a.ell, a.lam, a.der, a.zeta)
     path = OUT / a.split / f"A{a.subject:02d}_s{a.seed}_{t}.json"
     if path.exists(): print(path.name, "exists"); return
-    rec, g = run(a.subject, a.seed, a.cond, a.split, a.U, a.rule, a.eta, a.ell, a.lam, a.der)
+    rec, g = run(a.subject, a.seed, a.cond, a.split, a.U, a.rule, a.eta, a.ell, a.lam, a.der, a.zeta)
     C.write_receipt(path, rec)
     wdir = OUT / "weights" / a.split; wdir.mkdir(parents=True, exist_ok=True)
     np.savez(wdir / f"{path.stem}.npz", eff=np.asarray(g["lr"].brain.efficacy, float), bias=np.asarray(g["lr"].brain.bias, float),

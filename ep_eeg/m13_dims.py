@@ -74,8 +74,9 @@ def nearest_recon(seg, hid):
     return out
 
 
-def lake_recon(lake, g, seg, pats, every=1):
-    """lake_own reconstruction at every `every`-th sample, static equilibrium per sample. Returns {hid: (n,22,T')}."""
+def lake_recon(lake, g, seg, pats, every=1, in_time=False):
+    """lake_own reconstruction at every `every`-th sample, static equilibrium per sample (or, in_time: the lake run in
+    time, InertialLake.run, as M13 §6/§7 lakes are trained and scored). Returns {hid: (n,22,T')}."""
     nt, T = seg.shape[0], seg.shape[2]; res = {}
     for i in range(0, len(pats), 11):
         chunk = pats[i:i + 11]
@@ -85,8 +86,12 @@ def lake_recon(lake, g, seg, pats, every=1):
             val = np.where(Mk[None, :, None], 0.0, np.tanh(seg / 3.0))
             D[:, j * nt:(j + 1) * nt, :C.N_LEADS] = val.transpose(2, 0, 1); D[:, j * nt:(j + 1) * nt, C.N_LEADS:] = Mk[None, None, :]
         with np.errstate(all="ignore"):
-            out, resid = lake.track_static(D, g["out"], every=every)          # (T', B, 22)
-        if float(np.nan_to_num(resid, nan=np.inf).max()) > 1e-6: raise RuntimeError("static equilibrium not reached")
+            if in_time:
+                out = lake.run(D, M.SUB, g["out"], every=every)
+                if not np.isfinite(out).all(): raise RuntimeError("non-finite in-time run")
+            else:
+                out, resid = lake.track_static(D, g["out"], every=every)          # (T', B, 22)
+                if float(np.nan_to_num(resid, nan=np.inf).max()) > 1e-6: raise RuntimeError("static equilibrium not reached")
         for j, hid in enumerate(chunk):
             s = out[:, j * nt:(j + 1) * nt][:, :, list(hid)].transpose(1, 2, 0)    # (n, h, T')
             r = seg[:, :, ::every].copy(); r[:, list(hid)] = E.own_inverse(s); res[tuple(hid)] = r
@@ -232,6 +237,18 @@ def lake_for(kind, subject, seed):
         S.set_params(g["lr"], z["eff"], z["bias"])
         assert C.sha(np.asarray(g["lr"].brain.efficacy), np.asarray(g["lr"].brain.bias)) == rec["final_sha256"]
         return g, M.dynamics(g, "static", {})
+    if kind.startswith("T:"):                       # §6/§7 in-time lakes: T:<test receipt stem>, scored in time
+        from . import m13_learn as Lm, m13_time as Tm
+        from . import m12_s1 as S
+        stem = kind[2:].format(subject=subject, seed=seed)
+        rec = json.load(open(Tm.OUT / "test" / f"{stem}.json"))
+        g, _ = Lm.build(subject, seed, rec["cond"], rec["field"]["ell"], rec["field"]["lam"], der=rec["field"]["derangement"] or 0)
+        z = np.load(Tm.OUT / "weights" / "test" / f"{stem}.npz")
+        assert np.array_equal(z["pre"], g["conn"].pre) and np.array_equal(z["post"], g["conn"].post)
+        S.set_params(g["lr"], z["eff"], z["bias"])
+        assert C.sha(np.asarray(g["lr"].brain.efficacy), np.asarray(g["lr"].brain.bias)) == rec["final_sha256"]
+        zeta = rec.get("zeta")
+        return g, (M.dynamics(g, "dyn1", {}) if zeta is None else M.dynamics(g, "inert", {"zeta": zeta}))
     raise ValueError(kind)
 
 
@@ -240,7 +257,7 @@ def lake_job(kind, subject, seed):
     g, lake = lake_for(kind, subject, seed)
     mi = mi_patterns()
     pats = [tuple(h) for h in P3]
-    rec = lake_recon(lake, g, te, pats + [h for h in mi.values() if h not in pats], every=1)
+    rec = lake_recon(lake, g, te, pats + [h for h in mi.values() if h not in pats], every=1, in_time=kind.startswith("T:"))
     rows = [{"hidden": list(h), "lake": dims(rec[h], te, h)} for h in pats]
     summ = {f"lake_{d}": float(np.mean([r["lake"][d] for r in rows])) for d in rows[0]["lake"]}
     refs, clf = decode_refs(tr, ytr, te, yte)
@@ -258,7 +275,7 @@ def main(argv=None):
         path = OUT / "audit" / f"A{a.subject:02d}.json"
         rec = audit(a.subject)
     else:
-        tag = a.lake.replace(":", "_").replace("{subject:02d}", "").replace("{seed}", "")
+        tag = a.lake.replace(":", "_").replace("A{subject:02d}_s{seed}_", "").replace("{subject:02d}", "").replace("{seed}", "")
         path = OUT / "lake" / f"A{a.subject:02d}_s{a.seed}_{tag}.json"
         rec = lake_job(a.lake, a.subject, a.seed)
     rec["wall_s"] = time.time() - t0
