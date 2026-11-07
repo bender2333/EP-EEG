@@ -165,7 +165,7 @@ def run(subject, seed, cond, split, U, ell=ELL, lam=LAM, der=0):
             "data": data["source"], "init_sha256": init_sha,
             "final_sha256": C.sha(np.asarray(g["lr"].brain.efficacy), np.asarray(g["lr"].brain.bias)),
             "train": tr, "evals": {str(k): v for k, v in evals.items()}, "summary": final["summary"],
-            "patterns": final["patterns"], "e_seal": seal, "env": C.env_info(), "wall_s": time.time() - t0, "finished": C.now()}
+            "patterns": final["patterns"], "e_seal": seal, "env": C.env_info(), "wall_s": time.time() - t0, "finished": C.now()}, g
 
 
 def main(argv=None):
@@ -178,7 +178,10 @@ def main(argv=None):
     tag = "none" if a.cond == "none" else f"{a.cond}{a.der if a.cond == 'der' else ''}_ell{a.ell:g}_lam{a.lam:g}"
     path = OUT / a.split / f"A{a.subject:02d}_s{a.seed}_{tag}_U{a.U}.json"
     if path.exists(): print("exists", path); return
-    rec = run(a.subject, a.seed, a.cond, a.split, a.U, a.ell, a.lam, a.der)
+    rec, g = run(a.subject, a.seed, a.cond, a.split, a.U, a.ell, a.lam, a.der)
+    W = OUT / "weights" / a.split; W.mkdir(parents=True, exist_ok=True)      # final lake, for later evaluations
+    np.savez(W / (path.stem + ".npz"), eff=np.asarray(g["lr"].brain.efficacy, float), bias=np.asarray(g["lr"].brain.bias, float),
+             pre=np.asarray(g["conn"].pre), post=np.asarray(g["conn"].post), fx=g["fx"])
     C.write_receipt(path, rec)
     print(path.name, {k: round(v, 4) for k, v in rec["summary"].items() if isinstance(v, float)}, f"wall {rec['wall_s']:.0f}s", flush=True)
 
