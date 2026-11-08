@@ -55,7 +55,7 @@ def field_matrix(ell=ELL, lam=LAM, perm=None):
     return Q
 
 
-def build(subject, seed, cond, ell=ELL, lam=LAM, eta=E.ETA, der=0, trained=True):
+def build(subject, seed, cond, ell=ELL, lam=LAM, eta=E.ETA, der=0, trained=True, cap=S.CAP):
     """v0 lake of (subject, seed) from its E0 checkpoint (trained=False: the untrained E0 initial lake), plus the
     fixed field synapses for cond."""
     g0, init_sha = M.load_lake(subject, seed, trained=trained)
@@ -82,9 +82,9 @@ def build(subject, seed, cond, ell=ELL, lam=LAM, eta=E.ETA, der=0, trained=True)
         lr = Learner(brain, list(out), config=lc, plastic_synapses=~fx, plastic_neurons=pn, reciprocal=True)
     g = {"lr": lr, "conn": conn, "ff": ff, "fx": fx, "groups": None, "model": model, "lip": lip, "ns": ns, "n": n, "out": out,
          "cols": g0["cols"], "k": g0["k"], "Q": Q}
-    if field_mass(g).max() >= S.CAP:
+    if field_mass(g).max() >= cap:
         raise ValueError("field row mass alone reaches the cap")
-    project(g)                                # adding the field: plastic mass on outlet rows makes room for it
+    project(g, cap)                           # adding the field: plastic mass on outlet rows makes room for it
     if rho(g) >= 1.0 or not cd.certificate(g["lr"].brain, sources=range(ns)).certified:
         raise RuntimeError("lake with field not certified after projection")
     return g, init_sha

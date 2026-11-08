@@ -73,7 +73,7 @@ def sampler(seed):
     return draw
 
 
-def train(g, Xtr, seed, U, eta=E.ETA, log=print, on_eval=None):
+def train(g, Xtr, seed, U, eta=E.ETA, log=print, on_eval=None, cap=S.CAP):
     draw = sampler(seed); stats = {"accepted": 0, "refused": 0, "projections": 0, "log": []}
     nb = len(Xtr) // E.BATCH; t0 = time.time(); loss = []
     for u in range(U):
@@ -88,7 +88,7 @@ def train(g, Xtr, seed, U, eta=E.ETA, log=print, on_eval=None):
             stats["accepted"] += 1
         except LearningPhaseError:
             stats["refused"] += 1
-        if Lr.project(g): stats["projections"] += 1
+        if Lr.project(g, cap): stats["projections"] += 1
         if Lr.rho(g) >= 1.0: raise RuntimeError("rho~ >= 1 after projection")
         if (u + 1) % 200 == 0:
             stats["log"].append({"u": u + 1, "loss": float(np.mean(loss)) if loss else None, "rho": Lr.rho(g), "t": time.time() - t0}); loss = []
