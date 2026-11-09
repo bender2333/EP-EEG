@@ -1,0 +1,5 @@
+[submodule "data/bci-iv-2a"]
+	path = data/bci-iv-2a
+	url = https://github.com/ParthanOlikkal/BCI_Competition_IV_2a
+	update = none
+	branch = master
