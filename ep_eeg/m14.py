@@ -47,6 +47,7 @@ N_SUB = 11
 SUB_STARTS = [int(round(k * 15.625)) for k in range(N_SUB)]   # 0 .. 156, last window ends at 188
 K = 4                        # columns per virtual channel
 BETA, TOL, TEMP, CAP, RHO0 = 0.04, 3e-3, 0.1, 0.9, 0.6
+RHO0_MAX = 0.8               # init row-mass ceiling after the per-pathway budgets
 BUDGET, EVAL_TOL = 50000, 1e-5
 BATCH = 64
 DENSE_LIMIT = int(os.environ.get("M14_DENSE_LIMIT", "64"))   # small: scipy CSR transport (the net is ~2% dense)
@@ -74,15 +75,24 @@ def load(subject, split):
 
 
 # ----------------------------------------------------------------------------- network
-def _recip(E, a_idx, b_idx, w, plastic=True):
+PATHS = {"src": 0, "pool": 1, "read": 2, "lat": 3, "out": 4}
+# Init budget per pathway: after drawing, each pathway is scaled so that the largest weighted row mass it brings
+# to any neuron (either end of its reciprocal pairs) equals this number. One global scale over all free->free
+# edges (the M12/M13 rule) let the 87 lateral column edges take most of every column's budget, and the signal
+# fell ~30x per hop (filter 0.2 -> columns 0.007 -> outlets 0.0002 at init on A01).
+BUDGET_INIT = {"pool": 0.5, "read": 0.5, "lat": 0.15, "out": 0.5}
+G_FRONT = 2.0                # front-end gain: filter potentials ~ N(0, 1) on z-scored EEG
+
+
+def _recip(E, a_idx, b_idx, w, plastic=True, path="lat"):
     Pm, Qm = np.meshgrid(a_idx, b_idx, indexing="ij")
     w = np.asarray(w, float).ravel()
     E["pre"] += [Pm.ravel(), Qm.ravel()]; E["post"] += [Qm.ravel(), Pm.ravel()]; E["eff"] += [w, w]
     E["ff"] += [np.ones(Pm.size, bool)] * 2; E["grp"] += [-np.ones(Pm.size, np.int64)] * 2
-    E["pl"] += [np.full(Pm.size, plastic)] * 2
+    E["pl"] += [np.full(Pm.size, plastic)] * 2; E["path"] += [np.full(2 * Pm.size, PATHS[path])]
 
 
-def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
+def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P):
     assert arm in ARMS, arm
     rng = np.random.default_rng(init_seed)
     ns = p * NL
@@ -90,7 +100,7 @@ def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
     front = "identity" if arm == "B" else "car"
     W0 = g_front * (np.eye(NL) if front == "identity" else np.eye(NL) - 1.0 / NL)
     E = {"pre": [p0], "post": [q0], "eff": [W0.ravel()[tie]], "ff": [np.zeros(len(p0), bool)],
-         "grp": [tie.astype(np.int64)], "pl": [np.ones(len(p0), bool)]}
+         "grp": [tie.astype(np.int64)], "pl": [np.ones(len(p0), bool)], "path": [np.zeros(len(p0), int)]}
     nxt = ns + NL * p
     square = arm in ("C", "C_nolake")
     lake = arm not in ("nolake", "C_nolake")
@@ -98,7 +108,7 @@ def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
     if square:
         pools = np.arange(nxt, nxt + NL); nxt += NL
         for kf in range(NL):                                         # fixed time mean: not plastic
-            _recip(E, entry[kf], pools[kf:kf + 1], np.full(p, 1.0 / p), plastic=False)
+            _recip(E, entry[kf], pools[kf:kf + 1], np.full(p, 1.0 / p), plastic=False, path="pool")
     reads = [pools[kf:kf + 1] for kf in range(NL)] if square else [entry[kf] for kf in range(NL)]
     fan = 1 if square else p
     cols = np.array([], int)
@@ -106,29 +116,34 @@ def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
         nc = NL * k; cols = np.arange(nxt, nxt + nc); nxt += nc
         frozen = arm == "randlake"
         for kf in range(NL):
-            _recip(E, reads[kf], cols[kf * k:(kf + 1) * k], rng.normal(0, 1 / np.sqrt(fan), (fan, k)), plastic=not frozen)
+            _recip(E, reads[kf], cols[kf * k:(kf + 1) * k], rng.normal(0, 1 / np.sqrt(fan), (fan, k)), plastic=not frozen, path="read")
         iu, ju = np.triu_indices(nc, 1); w = rng.normal(0, 1 / np.sqrt(nc), len(iu))
         E["pre"] += [cols[iu], cols[ju]]; E["post"] += [cols[ju], cols[iu]]; E["eff"] += [w, w]
         E["ff"] += [np.ones(len(iu), bool)] * 2; E["grp"] += [-np.ones(len(iu), np.int64)] * 2
-        E["pl"] += [np.full(len(iu), not frozen)] * 2
+        E["pl"] += [np.full(len(iu), not frozen)] * 2; E["path"] += [np.full(2 * len(iu), PATHS["lat"])]
     out = np.arange(nxt, nxt + 4); nxt += 4; n = nxt
     if lake:
-        _recip(E, cols, out, rng.normal(0, 1 / np.sqrt(len(cols)), (len(cols), 4)))
+        _recip(E, cols, out, rng.normal(0, 1 / np.sqrt(len(cols)), (len(cols), 4)), path="out")
     else:
         src = np.concatenate(reads)
-        _recip(E, src, out, rng.normal(0, 1 / np.sqrt(len(src)), (len(src), 4)))
-    pre, post, eff, ff, grp, pl = (np.concatenate(E[key]) for key in ("pre", "post", "eff", "ff", "grp", "pl"))
+        _recip(E, src, out, rng.normal(0, 1 / np.sqrt(len(src)), (len(src), 4)), path="out")
+    pre, post, eff, ff, grp, pl, path = (np.concatenate(E[key]) for key in ("pre", "post", "eff", "ff", "grp", "pl", "path"))
     conn = cd.Connectome.from_synapses(n, pre=pre, post=post)
     order = np.lexsort((pre, post)); assert np.array_equal(conn.pre, pre[order]) and np.array_equal(conn.post, post[order])
-    eff, ff, grp, pl = eff[order], ff[order], grp[order], pl[order]
+    eff, ff, grp, pl, path = eff[order], ff[order], grp[order], pl[order], path[order]
     odd = np.ones(n); even = np.zeros(n)
     ent = np.arange(ns, ns + NL * p)
     if square: odd[ent], even[ent] = SQ_ODD, 1.0     # cadence needs odd > 0: a near-pure square
     even[cols] = 1.0
     model = evenodd_neuron_model(odd, even, linear=range(ns), dt=0.5)
     lip = model.lipschitz_per_neuron(n)
+    for name, b in BUDGET_INIT.items():
+        m = path == PATHS[name]
+        if m.any():
+            r = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * m, minlength=n).max()
+            eff = np.where(m, eff * b / r, eff)
     r = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * ff, minlength=n)[ns:].max()
-    eff = np.where(ff, eff * RHO0 / r, eff)
+    if r > RHO0_MAX: eff = np.where(ff, eff * RHO0_MAX / r, eff)
     brain = cd.NeuralGraph(conn, model, efficacy=eff, bias=np.zeros(n), dense_limit=DENSE_LIMIT)
     lc = LearnerConfig(beta=BETA, eta=eta, eta_bias=eta / 10, centered=True, free_steps=BUDGET, nudged_steps=BUDGET,
                        tolerance=TOL, nudge="cross_entropy", temperature=TEMP, normalize=0.0, normalize_floor=1e-3,
@@ -141,7 +156,7 @@ def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
                      tie_groups=grp, synapse_rate=tie_rates(grp))
     return {"lr": lr, "conn": conn, "model": model, "ff": ff, "pl": pl, "grp": grp, "lip": lip, "ns": ns, "n": n, "out": out,
             "entry": entry, "cols": cols, "pools": pools, "arm": arm, "front": front, "p": p, "tie": tie, "eta": eta,
-            "n_params": int(len(np.unique(grp[(grp >= 0) & pl])) + ((grp < 0) & pl).sum() // 2 + pn.sum())}
+            "path": path, "n_params": int(len(np.unique(grp[(grp >= 0) & pl])) + ((grp < 0) & pl).sum() // 2 + pn.sum())}
 
 
 def front_matrix(g):
