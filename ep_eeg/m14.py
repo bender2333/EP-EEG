@@ -29,11 +29,11 @@ Trial decision: mean outlet activity over the 11 sub-windows (frozen aggregation
 from __future__ import annotations
 import argparse, json, os, sys, time, warnings
 from pathlib import Path
-import numpy as np
 
 THREADS = int(os.environ.get("M14_THREADS", "1"))
 for _k in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMBA_NUM_THREADS"):
     os.environ.setdefault(_k, str(THREADS))
+import numpy as np  # noqa: E402  (after the thread caps)
 
 import cadence as cd  # noqa: E402
 from cadence.learning import (Learner, LearnerConfig, LearningPhaseError, evenodd_neuron_model,  # noqa: E402
@@ -49,6 +49,7 @@ K = 4                        # columns per virtual channel
 BETA, TOL, TEMP, CAP, RHO0 = 0.04, 3e-3, 0.1, 0.9, 0.6
 BUDGET, EVAL_TOL = 50000, 1e-5
 BATCH = 64
+DENSE_LIMIT = int(os.environ.get("M14_DENSE_LIMIT", "64"))   # small: scipy CSR transport (the net is ~2% dense)
 SQ_ODD = 0.1                 # arm C filter neurons: s = 0.1 tanh(v/2) + tanh(v/2)^2
 ARMS = ("A", "B", "C", "nolake", "C_nolake", "randlake")
 
@@ -128,7 +129,7 @@ def build(arm, init_seed, eta=0.05, g_front=1.0, k=K, p=P):
     lip = model.lipschitz_per_neuron(n)
     r = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * ff, minlength=n)[ns:].max()
     eff = np.where(ff, eff * RHO0 / r, eff)
-    brain = cd.NeuralGraph(conn, model, efficacy=eff, bias=np.zeros(n), dense_limit=4096)
+    brain = cd.NeuralGraph(conn, model, efficacy=eff, bias=np.zeros(n), dense_limit=DENSE_LIMIT)
     lc = LearnerConfig(beta=BETA, eta=eta, eta_bias=eta / 10, centered=True, free_steps=BUDGET, nudged_steps=BUDGET,
                        tolerance=TOL, nudge="cross_entropy", temperature=TEMP, normalize=0.0, normalize_floor=1e-3,
                        momentum=0.0, decay=0.0, scale_cap=1e9, qualified=True, damping=3, surprise=False)
@@ -217,7 +218,17 @@ def front_stats(g, W0):
             "row_sum_mean": float(Wm.sum(1).mean()), "row_sum_abs_mean": float(np.abs(Wm.sum(1)).mean())}
 
 
-def train(g, data, U, seed, eval_every=250, log=print):
+def save_weights(g, path):
+    path = Path(path); path.parent.mkdir(parents=True, exist_ok=True); tmp = path.with_suffix(".tmp.npz")
+    np.savez_compressed(tmp, eff=np.asarray(g["lr"].brain.efficacy, float), bias=np.asarray(g["lr"].brain.bias, float))
+    tmp.replace(path)
+
+
+def load_weights(g, path):
+    z = np.load(path); g["lr"].brain = g["lr"].brain.with_parameters(efficacy=z["eff"], bias=z["bias"]); return g
+
+
+def train(g, data, U, seed, eval_every=250, log=print, wdir=None):
     from cadence.learning import LearningPhaseError as LPE
     X = data["Xtr"].reshape(-1, data["Xtr"].shape[-1]); y = np.repeat(data["ytr"], N_SUB)
     rng = np.random.default_rng(14000 + seed)
@@ -240,6 +251,7 @@ def train(g, data, U, seed, eval_every=250, log=print):
                    "rejected_trials": s["rejected_trials"], "rho": rho(g), "t": time.time() - t0,
                    "train_acc": None if str_ is None else str_["acc"], "refused": st["refused"], **{"front_" + k: v for k, v in front_stats(g, W0).items()}}
             st["curve"].append(row)
+            if wdir is not None: save_weights(g, Path(wdir) / f"u{u + 1}.npz")
             log(f"u={u + 1} acc={s['acc']:.3f} k={s['kappa']:.3f} train={row['train_acc']} rho={row['rho']:.3f} "
                 f"refused={st['refused']} front_rel={row['front_rel_change']:.3f} cos_car={row['front_cos_car']:.3f} t={row['t']:.0f}")
     st["wall_s"] = time.time() - t0; st["certified_end"] = bool(certificate(g).get("certified"))
@@ -259,7 +271,8 @@ def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=25
     data = load(subject, split)
     init = 14500 + 100 * subject + seed
     g = build(arm, init, eta=eta); cert0 = certificate(g); W0 = front_matrix(g)
-    tr = train(g, data, U, seed, eval_every=eval_every, log=lambda m: print(f"[{arm} A{subject:02d} s{seed}] {m}", flush=True))
+    wdir = OUT / "weights" / f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}"
+    tr = train(g, data, U, seed, eval_every=eval_every, log=lambda m: print(f"[{arm} A{subject:02d} s{seed}] {m}", flush=True), wdir=wdir)
     s, A, ok = evaluate(g, data["Xte"], data["yte"], data["ytr"])
     pred = s.pop("pred")
     git = lambda *a, cwd=ROOT: subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True).stdout.strip()
