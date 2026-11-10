@@ -46,7 +46,7 @@ P = 32                       # samples per sub-window at 62.5 Hz
 N_SUB = 11
 SUB_STARTS = [int(round(k * 15.625)) for k in range(N_SUB)]   # 0 .. 156, last window ends at 188
 K = 4                        # columns per virtual channel
-BETA, TOL, TEMP, CAP, RHO0 = 0.04, 3e-3, 0.1, 0.9, 0.6
+BETA, TOL, TEMP, CAP, RHO0 = 0.04, 3e-3, 0.01, 0.9, 0.6   # TEMP 0.1 (M12) left outlet differences ~1e-3 unread
 RHO0_MAX = 0.8               # init row-mass ceiling after the per-pathway budgets
 BUDGET, EVAL_TOL = 50000, 1e-5
 BATCH = 64
@@ -80,7 +80,7 @@ PATHS = {"src": 0, "pool": 1, "read": 2, "lat": 3, "out": 4}
 # to any neuron (either end of its reciprocal pairs) equals this number. One global scale over all free->free
 # edges (the M12/M13 rule) let the 87 lateral column edges take most of every column's budget, and the signal
 # fell ~30x per hop (filter 0.2 -> columns 0.007 -> outlets 0.0002 at init on A01).
-BUDGET_INIT = {"pool": 0.5, "read": 0.5, "lat": 0.15, "out": 0.5}
+BUDGET_INIT = {"pool": 0.3, "read": 0.5, "lat": 0.15, "out": 0.5}
 G_FRONT = 2.0                # front-end gain: filter potentials ~ N(0, 1) on z-scored EEG
 
 
@@ -92,7 +92,8 @@ def _recip(E, a_idx, b_idx, w, plastic=True, path="lat"):
     E["pl"] += [np.full(Pm.size, plastic)] * 2; E["path"] += [np.full(2 * Pm.size, PATHS[path])]
 
 
-def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P):
+def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P, temp=None):
+    temp = TEMP if temp is None else temp
     assert arm in ARMS, arm
     rng = np.random.default_rng(init_seed)
     ns = p * NL
@@ -146,7 +147,7 @@ def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P):
     if r > RHO0_MAX: eff = np.where(ff, eff * RHO0_MAX / r, eff)
     brain = cd.NeuralGraph(conn, model, efficacy=eff, bias=np.zeros(n), dense_limit=DENSE_LIMIT)
     lc = LearnerConfig(beta=BETA, eta=eta, eta_bias=eta / 10, centered=True, free_steps=BUDGET, nudged_steps=BUDGET,
-                       tolerance=TOL, nudge="cross_entropy", temperature=TEMP, normalize=0.0, normalize_floor=1e-3,
+                       tolerance=TOL, nudge="cross_entropy", temperature=temp, normalize=0.0, normalize_floor=1e-3,
                        momentum=0.0, decay=0.0, scale_cap=1e9, qualified=True, damping=3, surprise=False)
     pn = np.zeros(n, bool); pn[ns:] = True
     if arm == "randlake": pn[cols] = False
@@ -273,7 +274,8 @@ def train(g, data, U, seed, eval_every=250, log=print, wdir=None):
     return st
 
 
-def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=250):
+def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=250, temp=None):
+    temp = TEMP if temp is None else temp
     import hashlib, subprocess
     t_start = time.time()
     if split == "val":
@@ -285,15 +287,15 @@ def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=25
         if os.environ.get("EPEEG_GATE") != "1": raise PermissionError("gate split needs EPEEG_GATE=1")
     data = load(subject, split)
     init = 14500 + 100 * subject + seed
-    g = build(arm, init, eta=eta); cert0 = certificate(g); W0 = front_matrix(g)
-    wdir = OUT / "weights" / f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}"
+    g = build(arm, init, eta=eta, temp=temp); cert0 = certificate(g); W0 = front_matrix(g)
+    wdir = OUT / "weights" / f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}_T{temp:g}"
     tr = train(g, data, U, seed, eval_every=eval_every, log=lambda m: print(f"[{arm} A{subject:02d} s{seed}] {m}", flush=True), wdir=wdir)
     s, A, ok = evaluate(g, data["Xte"], data["yte"], data["ytr"])
     pred = s.pop("pred")
     git = lambda *a, cwd=ROOT: subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True).stdout.strip()
     import cadence
     rec = {"stage": "M14", "split": split, "subject": subject, "arm": arm, "seed": seed, "U": U, "eta": eta, "init_seed": init,
-           "config": {"P": P, "fs": 62.5, "n_sub": N_SUB, "K": K, "beta": BETA, "tol": TOL, "eval_tol": EVAL_TOL, "temp": TEMP,
+           "config": {"P": P, "fs": 62.5, "n_sub": N_SUB, "K": K, "beta": BETA, "tol": TOL, "eval_tol": EVAL_TOL, "temp": temp, "budget_init": BUDGET_INIT, "g_front": G_FRONT,
                       "cap": CAP, "rho0": RHO0, "batch": BATCH, "sq_odd": SQ_ODD, "front": g["front"], "n_params": g["n_params"],
                       "neurons": g["n"], "synapses": int(len(g["conn"].pre))},
            "cert_init": cert0, "train": tr, "test": s, "pred": pred, "y": data["yte"],
@@ -303,7 +305,7 @@ def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=25
                                    "cadence_version": cadence.__version__,
                                    "cadence_commit": git("rev-parse", "HEAD", cwd=Path(cadence.__file__).resolve().parents[2])},
            "wall_s": time.time() - t_start, "finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    out = Path(out_dir or (OUT / split)) / f"{arm}_A{subject:02d}_s{seed}.json"
+    out = Path(out_dir or (OUT / split)) / f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}_T{temp:g}.json"
     from ep_eeg.m13_common import write_receipt
     write_receipt(out, rec)
     print(f"[{arm} A{subject:02d} s{seed}] DONE acc={s['acc']:.3f} kappa={s['kappa']:.3f} wall={rec['wall_s']:.0f}s -> {out}", flush=True)
@@ -316,8 +318,9 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0); ap.add_argument("--U", type=int, required=True)
     ap.add_argument("--eta", type=float, default=0.05); ap.add_argument("--split", default="val", choices=("val", "gate"))
     ap.add_argument("--out", default=None); ap.add_argument("--eval-every", type=int, default=250)
+    ap.add_argument("--temp", type=float, default=TEMP)
     a = ap.parse_args(argv)
-    run_job(a.subject, a.arm, a.seed, a.U, a.eta, a.split, a.out, a.eval_every)
+    run_job(a.subject, a.arm, a.seed, a.U, a.eta, a.split, a.out, a.eval_every, a.temp)
 
 
 if __name__ == "__main__":
