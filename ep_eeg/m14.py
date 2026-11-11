@@ -288,7 +288,7 @@ def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=25
     data = load(subject, split)
     init = 14500 + 100 * subject + seed
     g = build(arm, init, eta=eta, temp=temp); cert0 = certificate(g); W0 = front_matrix(g)
-    wdir = OUT / "weights" / f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}_T{temp:g}"
+    wdir = OUT / "weights" / (f"{arm}_A{subject:02d}_s{seed}_eta{eta:g}_T{temp:g}" + os.environ.get("M14_WTAG", ""))  # exploratory runs keep their own weights
     tr = train(g, data, U, seed, eval_every=eval_every, log=lambda m: print(f"[{arm} A{subject:02d} s{seed}] {m}", flush=True), wdir=wdir)
     s, A, ok = evaluate(g, data["Xte"], data["yte"], data["ytr"])
     pred = s.pop("pred")
