@@ -19,10 +19,12 @@ Arms
   B        identity front -> lake -> outlets
   C        car front with even-only filter neurons (s = tanh(v/2)^2, a parameter-free square), one pool
            neuron per virtual channel holding the time mean (fixed reciprocal weights, not plastic),
-           columns read the pools -> lake -> outlets
+           columns read the pools -> lake -> outlets. Outlets touch columns only (no pool skip).
   nolake   car front -> outlets directly (outlets reciprocal with every filter neuron)
   C_nolake C's front (square + time mean) -> outlets directly (exploratory reference)
   randlake A with the lake frozen at its initial weights (filter and column<->outlet still learn)
+  C_skip   exploratory, not a preregistered criterion: identical to C, plus a reciprocal pool<->outlet
+           projection on its own init budget ("skip"). Stays on the T session.
 
 Trial decision: mean outlet activity over the 11 sub-windows (frozen aggregation, eval/scoring.py).
 """
@@ -52,7 +54,9 @@ BUDGET, EVAL_TOL = 50000, 1e-5
 BATCH = 64
 DENSE_LIMIT = int(os.environ.get("M14_DENSE_LIMIT", "64"))   # small: scipy CSR transport (the net is ~2% dense)
 SQ_ODD = 0.1                 # arm C filter neurons: s = 0.1 tanh(v/2) + tanh(v/2)^2
-ARMS = ("A", "B", "C", "nolake", "C_nolake", "randlake")
+PREREG_ARMS = ("A", "B", "C", "nolake", "C_nolake", "randlake")
+EXPLORATORY_ARMS = ("C_skip",)   # not a preregistered criterion; T session only
+ARMS = PREREG_ARMS + EXPLORATORY_ARMS
 
 
 # ----------------------------------------------------------------------------- data
@@ -75,12 +79,14 @@ def load(subject, split):
 
 
 # ----------------------------------------------------------------------------- network
-PATHS = {"src": 0, "pool": 1, "read": 2, "lat": 3, "out": 4}
+PATHS = {"src": 0, "pool": 1, "read": 2, "lat": 3, "out": 4, "skip": 5}
 # Init budget per pathway: after drawing, each pathway is scaled so that the largest weighted row mass it brings
 # to any neuron (either end of its reciprocal pairs) equals this number. One global scale over all free->free
 # edges (the M12/M13 rule) let the 87 lateral column edges take most of every column's budget, and the signal
 # fell ~30x per hop (filter 0.2 -> columns 0.007 -> outlets 0.0002 at init on A01).
-BUDGET_INIT = {"pool": 0.3, "read": 0.5, "lat": 0.15, "out": 0.5}
+BUDGET_INIT = {"pool": 0.3, "read": 0.5, "lat": 0.15, "out": 0.5, "skip": 0.5}
+# "skip" is C_skip only: pool <-> outlet, same per-pathway ceiling as "out". Arms without those edges
+# leave the entry unused (the mask is empty), so A–randlake init weights do not move.
 G_FRONT = 2.0                # front-end gain: filter potentials ~ N(0, 1) on z-scored EEG
 
 
@@ -103,7 +109,7 @@ def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P, temp=None):
     E = {"pre": [p0], "post": [q0], "eff": [W0.ravel()[tie]], "ff": [np.zeros(len(p0), bool)],
          "grp": [tie.astype(np.int64)], "pl": [np.ones(len(p0), bool)], "path": [np.zeros(len(p0), int)]}
     nxt = ns + NL * p
-    square = arm in ("C", "C_nolake")
+    square = arm in ("C", "C_nolake", "C_skip")
     lake = arm not in ("nolake", "C_nolake")
     pools = None
     if square:
@@ -128,6 +134,10 @@ def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P, temp=None):
     else:
         src = np.concatenate(reads)
         _recip(E, src, out, rng.normal(0, 1 / np.sqrt(len(src)), (len(src), 4)), path="out")
+    if arm == "C_skip":
+        # Drawn after every shared draw, so C and C_skip share the same pre-budget efficacies on every
+        # edge C has. Plastic, reciprocal, own pathway so its init scale is not folded into "out".
+        _recip(E, pools, out, rng.normal(0, 1 / np.sqrt(len(pools)), (len(pools), 4)), plastic=True, path="skip")
     pre, post, eff, ff, grp, pl, path = (np.concatenate(E[key]) for key in ("pre", "post", "eff", "ff", "grp", "pl", "path"))
     conn = cd.Connectome.from_synapses(n, pre=pre, post=post)
     order = np.lexsort((pre, post)); assert np.array_equal(conn.pre, pre[order]) and np.array_equal(conn.post, post[order])
@@ -138,13 +148,28 @@ def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P, temp=None):
     even[cols] = 1.0
     model = evenodd_neuron_model(odd, even, linear=range(ns), dt=0.5)
     lip = model.lipschitz_per_neuron(n)
+    scales = {}
     for name, b in BUDGET_INIT.items():
         m = path == PATHS[name]
         if m.any():
             r = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * m, minlength=n).max()
+            scales[name] = float(b / r)
             eff = np.where(m, eff * b / r, eff)
-    r = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * ff, minlength=n)[ns:].max()
-    if r > RHO0_MAX: eff = np.where(ff, eff * RHO0_MAX / r, eff)
+    free_inc = np.bincount(conn.post, np.abs(eff) * lip[conn.pre] * ff, minlength=n)
+    r = free_inc[ns:].max()
+    gscale = 1.0
+    if r > RHO0_MAX:
+        gscale = RHO0_MAX / r
+        eff = np.where(ff, eff * RHO0_MAX / r, eff)   # (eff * RHO0_MAX) / r, same order as before the diag
+    def _layer_max(inc):
+        d = {"front": float(inc[ns:ns + NL * p].max())}
+        if pools is not None: d["pool"] = float(inc[pools].max())
+        if len(cols): d["column"] = float(inc[cols].max())
+        d["outlet"] = float(inc[out].max())
+        return d
+    init_scale = {"pathway": scales, "budget": {k: float(v) for k, v in BUDGET_INIT.items() if k in scales},
+                  "global": float(gscale), "row_mass_before_global": float(r),
+                  "layer_max_before_global": _layer_max(free_inc)}
     brain = cd.NeuralGraph(conn, model, efficacy=eff, bias=np.zeros(n), dense_limit=DENSE_LIMIT)
     lc = LearnerConfig(beta=BETA, eta=eta, eta_bias=eta / 10, centered=True, free_steps=BUDGET, nudged_steps=BUDGET,
                        tolerance=TOL, nudge="cross_entropy", temperature=temp, normalize=0.0, normalize_floor=1e-3,
@@ -157,7 +182,8 @@ def build(arm, init_seed, eta=0.05, g_front=G_FRONT, k=K, p=P, temp=None):
                      tie_groups=grp, synapse_rate=tie_rates(grp))
     return {"lr": lr, "conn": conn, "model": model, "ff": ff, "pl": pl, "grp": grp, "lip": lip, "ns": ns, "n": n, "out": out,
             "entry": entry, "cols": cols, "pools": pools, "arm": arm, "front": front, "p": p, "tie": tie, "eta": eta,
-            "path": path, "n_params": int(len(np.unique(grp[(grp >= 0) & pl])) + ((grp < 0) & pl).sum() // 2 + pn.sum())}
+            "path": path, "init_scale": init_scale,
+            "n_params": int(len(np.unique(grp[(grp >= 0) & pl])) + ((grp < 0) & pl).sum() // 2 + pn.sum())}
 
 
 def front_matrix(g):
@@ -244,7 +270,7 @@ def load_weights(g, path):
     z = np.load(path); g["lr"].brain = g["lr"].brain.with_parameters(efficacy=z["eff"], bias=z["bias"]); return g
 
 
-def train(g, data, U, seed, eval_every=250, log=print, wdir=None):
+def train(g, data, U, seed, eval_every=250, log=print, wdir=None, eval_during=True):
     from cadence.learning import LearningPhaseError as LPE
     X = data["Xtr"].reshape(-1, data["Xtr"].shape[-1]); y = np.repeat(data["ytr"], N_SUB)
     rng = np.random.default_rng(14000 + seed)
@@ -260,7 +286,7 @@ def train(g, data, U, seed, eval_every=250, log=print, wdir=None):
         except LPE:
             st["refused"] += 1
         if project(g): st["projections"] += 1
-        if (u + 1) % eval_every == 0 or u + 1 == U:
+        if eval_during and ((u + 1) % eval_every == 0 or u + 1 == U):
             s, _, _ = evaluate(g, data["Xte"], data["yte"], data["ytr"])
             str_, _, _ = evaluate(g, data["Xtr"], data["ytr"], data["ytr"]) if (u + 1) % (4 * eval_every) == 0 or u + 1 == U else (None, 0, 0)
             row = {"u": u + 1, "acc": s["acc"], "kappa": s["kappa"], "settle_rate": s["settle_rate"],
@@ -277,7 +303,11 @@ def train(g, data, U, seed, eval_every=250, log=print, wdir=None):
 def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=250, temp=None):
     temp = TEMP if temp is None else temp
     import hashlib, subprocess
+    if arm in EXPLORATORY_ARMS and split != "val":
+        raise PermissionError(f"{arm} is exploratory and stays on the T session (split=val)")
     t_start = time.time()
+    if out_dir is None and arm in EXPLORATORY_ARMS:
+        out_dir = OUT / "exploratory"
     if split == "val":
         from ep_eeg.m13_common import e_seal
         seal = e_seal()
@@ -295,7 +325,9 @@ def run_job(subject, arm, seed, U, eta, split="val", out_dir=None, eval_every=25
     git = lambda *a, cwd=ROOT: subprocess.run(["git", *a], cwd=cwd, capture_output=True, text=True).stdout.strip()
     import cadence
     rec = {"stage": "M14", "split": split, "subject": subject, "arm": arm, "seed": seed, "U": U, "eta": eta, "init_seed": init,
-           "config": {"P": P, "fs": 62.5, "n_sub": N_SUB, "K": K, "beta": BETA, "tol": TOL, "eval_tol": EVAL_TOL, "temp": temp, "budget_init": BUDGET_INIT, "g_front": G_FRONT,
+           "config": {"P": P, "fs": 62.5, "n_sub": N_SUB, "K": K, "beta": BETA, "tol": TOL, "eval_tol": EVAL_TOL, "temp": temp,
+                      "budget_init": {k: float(v) for k, v in BUDGET_INIT.items() if k != "skip" or k in g["init_scale"]["pathway"]},
+                      "init_scale": g["init_scale"], "g_front": G_FRONT,
                       "cap": CAP, "rho0": RHO0, "batch": BATCH, "sq_odd": SQ_ODD, "front": g["front"], "n_params": g["n_params"],
                       "neurons": g["n"], "synapses": int(len(g["conn"].pre))},
            "cert_init": cert0, "train": tr, "test": s, "pred": pred, "y": data["yte"],
