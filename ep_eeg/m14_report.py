@@ -10,7 +10,8 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 R = ROOT / "receipts" / "M14"
-ARMS = ("A", "B", "C", "nolake", "C_nolake", "randlake")
+ARMS = ("A", "B", "C", "nolake", "C_nolake", "randlake")  # preregistered only; do not add exploratory arms
+EXPLORATORY_ARMS = ("C_skip",)
 
 
 def load(d, pattern="*.json"):
@@ -153,8 +154,53 @@ def print_gate(g):
         print(f"| {a} | {tas} | {arms[a]['val_acc']:.3f} | {arms[a]['E_acc']:.3f} | {f('front_rel_change')} | {f('front_cos_car')} | {f('front_cos_identity')} | {f('front_row_sum_mean')} |")
 
 
+def exploratory_summary(directory):
+    """T-validation receipts for exploratory arms. Any other split, including a gate file, is skipped."""
+    directory = Path(directory)
+    rows = []
+    if not directory.is_dir():
+        return rows
+    for f in sorted(directory.glob("*.json")):
+        r = json.loads(f.read_text())
+        if r.get("split") != "val" or r.get("arm") not in EXPLORATORY_ARMS:
+            continue
+        curve = r.get("train", {}).get("curve") or []
+        last = curve[-1] if curve else {}
+        test = r.get("test") or {}
+        scale = (r.get("config") or {}).get("init_scale") or {}
+        rows.append({"arm": r["arm"], "subject": int(r["subject"]), "seed": int(r["seed"]),
+                     "eta": float(r["eta"]), "U": int(r["U"]),
+                     "acc_val": float(test.get("acc", last.get("acc"))),
+                     "kappa_val": float(test.get("kappa", last.get("kappa"))),
+                     "settle_rate": float(test.get("settle_rate", last.get("settle_rate"))),
+                     "rejected_trials": int(test.get("rejected_trials", last.get("rejected_trials") or 0)),
+                     "train_acc": None if last.get("train_acc") is None else float(last["train_acc"]),
+                     "init_global": None if scale.get("global") is None else float(scale["global"])})
+    return rows
+
+
+def print_exploratory(rows):
+    print("探索性臂（只读 T 验证，不进预注册判据）")
+    if not rows:
+        print("(无回执)"); return
+    print("| 臂 | 被试 | 种子 | η | U | 验证 acc | 验证 κ | 合格率 | 拒判 | 训练 acc | 初始化全局缩放 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+    for r in rows:
+        ta = "—" if r["train_acc"] is None else f"{r['train_acc']:.3f}"
+        ig = "—" if r["init_global"] is None else f"{r['init_global']:.3f}"
+        print(f"| {r['arm']} | A{r['subject']:02d} | {r['seed']} | {r['eta']:g} | {r['U']} | {r['acc_val']:.3f} | {r['kappa_val']:.3f} | {r['settle_rate']:.3f} | {r['rejected_trials']} | {ta} | {ig} |")
+    for arm in EXPLORATORY_ARMS:
+        sub = [r for r in rows if r["arm"] == arm and r["seed"] == 0]
+        if len(sub) < 1: continue
+        print(f"{arm} 种子 0，{len(sub)} 名被试：验证 acc {np.mean([r['acc_val'] for r in sub]):.3f}，κ {np.mean([r['kappa_val'] for r in sub]):.3f}")
+
+
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument("--select", action="store_true"); ap.add_argument("--gate", action="store_true"); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument("--select", action="store_true"); ap.add_argument("--gate", action="store_true")
+    ap.add_argument("--exploratory", nargs="?", const=str(R / "exploratory"), default=None,
+                    help="T-validation table for exploratory arms (default receipts/M14/exploratory)")
+    a = ap.parse_args()
+    if a.exploratory is not None:
+        print_exploratory(exploratory_summary(a.exploratory)); return
     if a.gate:
         g = gate_summary(); (R / "gate_summary.json").write_text(json.dumps(g, indent=1)); print_gate(g); return
     recs = load("grid")

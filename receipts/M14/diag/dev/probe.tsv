@@ -1,0 +1,15 @@
+arm	subject	layer	n_features	acc_val	kappa_val	acc_train	kappa_train	settle_rate_val	settle_rate_train	rejected_val	rejected_train	eta	U	seed	weight_source	dev
+C	0	pools	22	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	0	columns	88	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	0	outlets	4	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	0	readout	4	0.25	0.0	0.25	0.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	0	pools	22	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	0	outlets	4	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	0	readout	4	0.25	0.0	0.25	0.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	mean	pools	22	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	mean	columns	88	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	mean	outlets	4	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C	mean	readout	4	0.25	0.0	0.25	0.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	mean	pools	22	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	mean	outlets	4	1.0	1.0	1.0	1.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
+C_nolake	mean	readout	4	0.25	0.0	0.25	0.0	1.0	1.0	0	0	0.3	1	0	dev-retrain	True
