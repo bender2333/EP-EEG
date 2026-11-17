@@ -36,7 +36,7 @@ def run_one(kind, subject, seed, U, arm="C"):
         path = C.OUT.parent / "M16" / "scale" / f"{arm}_{kind}_U{U}_A{subject:02d}_s{seed}.json"
         C.write_json(path, rec)
         return rec
-    tr = M.train(g, data, U, seed, eval_every=max(U, 1),
+    tr = M.train(g, data, U, seed, eval_every=min(250, U),
                  log=lambda m, k=kind, s=subject: print(f"[{arm} {k} A{s:02d}] {m}", flush=True))
     ev, _, _ = M.evaluate(g, data["Xte"], data["yte"], data["ytr"])
     ev.pop("pred", None)

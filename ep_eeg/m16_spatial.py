@@ -22,7 +22,7 @@ def csp_bank(train_seg, y, test_seg):
     cols_tr, cols_te = [], []
     for lo, hi in BANDS:
         xtr, xte = _bandpass(train_seg, lo, hi), _bandpass(test_seg, lo, hi)
-        csp = CSP(n_components=4, reg="ledoit_wolf", log=True).fit(xtr, y)
+        csp = CSP(n_components=4, log=True).fit(xtr, y)
         cols_tr.append(csp.transform(xtr))
         cols_te.append(csp.transform(xte))
     return np.hstack(cols_tr), np.hstack(cols_te)
@@ -33,7 +33,7 @@ def broadband_csp(seg, y):
     from mne.decoding import CSP
     x = _bandpass(seg, 8.0, 30.0)
     n = min(22, x.shape[0] - 1)
-    csp = CSP(n_components=n, reg="ledoit_wolf", log=False).fit(x, y)
+    csp = CSP(n_components=n, log=False).fit(x, y)
     W = np.asarray(csp.filters_, float)
     if W.shape != (22, 22):
         full = np.eye(22)
@@ -106,7 +106,7 @@ def front_one(kind, subject, seed, U):
         C.write_json(C.OUT.parent / "M16" / "spatial" / f"{kind}_U{U}_A{subject:02d}_s{seed}.json", rec)
         return rec
     data = C.load_t(subject)
-    tr = M.train(g, data, U, seed, eval_every=max(U, 1),
+    tr = M.train(g, data, U, seed, eval_every=min(250, U),
                  log=lambda m, k=kind, s=subject: print(f"[{k} A{s:02d}] {m}", flush=True))
     ev, _, _ = M.evaluate(g, data["Xte"], data["yte"], data["ytr"])
     ev.pop("pred", None)
