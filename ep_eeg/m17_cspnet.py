@@ -106,14 +106,16 @@ def zscore(train, test):
 
 
 def run_one(kind, subject, seed, U):
+    import time
     from ep_eeg.data import load_subject
+    t0 = time.time()
     raw = load_subject(subject)
     ytr, yte = np.asarray(raw["train"]["y"]), np.asarray(raw["val"]["y"])
     Ftr, Fte = csp_bank(raw["train"]["seg"], ytr, raw["val"]["seg"])
     Ztr, Zte = zscore(Ftr, Fte)
     g = build(kind, 22000 + subject + 30 * seed)
     h = {"lr": g["lr"], "n": g["n"], "d": g["d"], "out": g["out"], "ns": g["ns"]}
-    info = _train_fixed(h, Ztr, ytr, U, seed)
+    info = _train_fixed(h, Ztr, ytr, U, seed, label=f"{kind} A{subject:02d}")
     pred, ok = C.head_activity(h, Zte)
     score = C.kappa_acc(yte, pred.argmax(1))
     train_pred, train_ok = C.head_activity(h, Ztr)
@@ -122,15 +124,18 @@ def run_one(kind, subject, seed, U):
            "split": "val", "updates": info["updates"], "refused": info["refused"],
            "train_acc": train_score["acc"], "train_kappa": train_score["kappa"],
            "train_settle_rate": float(np.mean(train_ok)), "settle_rate": float(np.mean(ok)),
-           "rejected_trials": int((~np.asarray(ok)).sum()), **score, "gscale": g["gscale"]}
+           "rejected_trials": int((~np.asarray(ok)).sum()), **score, "gscale": g["gscale"],
+           "wall_s": time.time() - t0}
     return rec
 
 
-def _train_fixed(h, X, y, U, seed, batch=32):
+def _train_fixed(h, X, y, U, seed, batch=32, label=""):
     """Exactly U attempts. No early stop, so the three architectures see the same update budget."""
+    import time
     import warnings
     from cadence.learning import LearningPhaseError
     rng = np.random.default_rng(17000 + seed)
+    t0 = time.time()
     y = np.asarray(y)
     nb = max(1, len(X) // batch)
     done = refused = 0
@@ -148,6 +153,8 @@ def _train_fixed(h, X, y, U, seed, batch=32):
             done += 1
         except LearningPhaseError:
             refused += 1
+        if label and ((u + 1) % 200 == 0 or u + 1 == U):
+            print(f"[{label}] u={u + 1} refused={refused} t={time.time() - t0:.0f}", flush=True)
     return {"updates": done, "refused": refused}
 
 
