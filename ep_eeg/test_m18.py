@@ -49,6 +49,17 @@ def test_pathway_scale_clips_and_prototypes_have_unit_rms():
     assert np.allclose(np.sqrt(np.mean(R ** 2, axis=0)), 1.0)
 
 
+def test_zero_offset_adds_no_field():
+    from ep_eeg import m14 as M
+    from ep_eeg.m18_fix import field_shift, offset_index
+    g = M.build("C", 1, eta=0.3)
+    mu = np.zeros(g["n"])
+    assert np.allclose(field_shift(g, mu), 0.0)
+    idx = offset_index(g)
+    assert set(np.asarray(g["pools"])).issubset(set(idx))
+    assert not np.any(idx < g["ns"])
+
+
 def test_hop_gain_is_slope_times_weight():
     pre = np.array([0])
     post = np.array([1])
