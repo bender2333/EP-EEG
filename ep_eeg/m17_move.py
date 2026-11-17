@@ -152,10 +152,36 @@ def train_front_rate(subject, scale, seed, U):
     ev, _, _ = M.evaluate(g, data["Xte"], data["yte"], data["ytr"])
     ev.pop("pred", None)
     row = tr["curve"][-1]
+    cos_csp, cos_matched = _csp_similarity(g, subject)
     return {"stage": "M17", "block": "front_rate", "subject": subject, "seed": seed, "U": U,
             "scale": scale, "split": "val", "test": ev, "front_rel": row["front_rel_change"],
-            "cos_car": row["front_cos_car"], "refused": tr["refused"],
-            "certified_end": tr["certified_end"]}
+            "cos_car": row["front_cos_car"], "cos_csp": cos_csp, "cos_csp_matched": cos_matched,
+            "refused": tr["refused"], "certified_end": tr["certified_end"], "wall_s": tr["wall_s"]}
+
+
+def _csp_similarity(g, subject):
+    """Plain matrix cosine is the preregistered comparison. The matched-row value is exploratory."""
+    from ep_eeg.data import load_subject
+    from .m16_spatial import broadband_csp
+    raw = load_subject(subject)
+    Wc = broadband_csp(np.asarray(raw["train"]["seg"]), np.asarray(raw["train"]["y"]))
+    Wm = M.front_matrix(g)
+
+    def cos(a, b):
+        return float((a * b).sum() / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+
+    A = Wm / (np.linalg.norm(Wm, axis=1, keepdims=True) + 1e-12)
+    B = Wc / (np.linalg.norm(Wc, axis=1, keepdims=True) + 1e-12)
+    S = np.abs(A @ B.T)
+    used, total = set(), 0.0
+    for i in np.argsort(-S.max(1)):
+        for j in np.argsort(-S[i]):
+            j = int(j)
+            if j not in used:
+                used.add(j)
+                total += float(S[i, j])
+                break
+    return cos(Wm, Wc), total / len(A)
 
 
 def main(argv=None):
