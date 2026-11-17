@@ -32,6 +32,12 @@ def geometry(act, ok, y):
             "rival_mean": float(np.mean(rival.max(1)))}
 
 
+def zscore(Ftr, Fte):
+    mu, sd = Ftr.mean(0), Ftr.std(0)
+    sd = np.where(sd < 1e-8, 1.0, sd)
+    return (Ftr - mu) / sd, (Fte - mu) / sd
+
+
 def ep_on_trials(Ftr, ytr, Fte, yte, seed, U):
     h = C.build_head(Ftr.shape[1], seed=17000 + seed)
     info = C.train_head(h, Ftr, ytr, U, seed)
@@ -60,7 +66,17 @@ def one(arm, subject, seed=0):
         bp = {**C.kappa_acc(yte, bp_te), "train_acc": float((bp_tr == ytr).mean())}
         ep = ep_on_trials(tr_feats[name], ytr, va_feats[name], yte,
                           1000 * subject + 50 * seed + LAYER_SEED[name], HEAD_U[name])
-        layers[name] = {"lda": lda, "bp": bp, "ep": ep, "n_features": int(tr_feats[name].shape[1])}
+        # Exploratory, added after the A01 smoke: outlet activities are ~1e-3, so a
+        # default logistic penalty and an EP head scaled for O(1) inputs both stall.
+        # Z-scoring uses training statistics only.
+        Ztr, Zte = zscore(tr_feats[name], va_feats[name])
+        zp_te, zp_tr = C.logreg_predict(Ztr, ytr, Zte)
+        bp_z = {**C.kappa_acc(yte, zp_te), "train_acc": float((zp_tr == ytr).mean())}
+        ep_z = ep_on_trials(Ztr, ytr, Zte, yte, 5000 + 1000 * subject + LAYER_SEED[name], HEAD_U[name])
+        layers[name] = {"lda": lda, "bp": bp, "ep": ep, "bp_z": bp_z, "ep_z": ep_z,
+                        "feature_std": [float(v) for v in tr_feats[name].std(0)],
+                        "n_features": int(tr_feats[name].shape[1]),
+                        "scale_note": "bp_z and ep_z are exploratory z-scored features"}
     decision = {"acc": va_sc["acc"], "kappa": va_sc["kappa"], "train_acc": tr_sc["acc"],
                 "train_kappa": tr_sc["kappa"], "settle_rate": va_sc["settle_rate"],
                 "rejected_trials": va_sc["rejected_trials"]}
@@ -94,14 +110,19 @@ def summarize(rows):
             lda = _col(sub, arm, layer, "lda", "acc_val")
             bp = _col(sub, arm, layer, "bp", "acc")
             ep = _col(sub, arm, layer, "ep", "acc")
+            bp_z = _col(sub, arm, layer, "bp_z", "acc")
+            ep_z = _col(sub, arm, layer, "ep_z", "acc")
             dec = block["decision_acc"]
             block[layer] = {
-                "lda_acc": lda, "bp_acc": bp, "ep_acc": ep,
+                "lda_acc": lda, "bp_acc": bp, "ep_acc": ep, "bp_z_acc": bp_z, "ep_z_acc": ep_z,
                 "lda_kappa": _col(sub, arm, layer, "lda", "kappa_val"),
                 "bp_kappa": _col(sub, arm, layer, "bp", "kappa"),
                 "ep_kappa": _col(sub, arm, layer, "ep", "kappa"),
+                "bp_z_kappa": _col(sub, arm, layer, "bp_z", "kappa"),
+                "ep_z_kappa": _col(sub, arm, layer, "ep_z", "kappa"),
                 "lda_vs_bp": C.paired(lda, bp), "bp_vs_decision": C.paired(bp, dec),
-                "lda_vs_decision": C.paired(lda, dec), "ep_vs_bp": C.paired(ep, bp)}
+                "lda_vs_decision": C.paired(lda, dec), "ep_vs_bp": C.paired(ep, bp),
+                "bp_z_vs_lda": C.paired(bp_z, lda), "ep_z_vs_bp_z": C.paired(ep_z, bp_z)}
         out[arm] = block
     return out
 
