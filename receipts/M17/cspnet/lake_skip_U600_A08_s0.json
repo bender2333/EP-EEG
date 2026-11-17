@@ -1,0 +1,1 @@
+{"stage": "M17", "block": "cspnet", "kind": "lake_skip", "subject": 8, "seed": 0, "U": 600, "split": "val", "updates": 600, "refused": 0, "train_acc": 0.8177083333333334, "train_kappa": 0.7569444444444444, "train_settle_rate": 1.0, "settle_rate": 1.0, "rejected_trials": 0, "acc": 0.65625, "kappa": 0.5416666666666667, "n": 96, "gscale": 1.0, "wall_s": 6.435641527175903}
