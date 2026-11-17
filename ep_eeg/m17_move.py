@@ -97,8 +97,9 @@ def rate_scale(layers):
     ref = layers["out"]["rel_median"] if "out" in layers else float(np.median(
         [layers[k]["rel_median"] for k in layers if k != "src"]))
     if front <= 0:
-        return 100.0
-    return float(np.clip(ref / front, 1.0, 100.0))
+        return 100.0, None
+    raw = float(ref / front)
+    return float(np.clip(raw, 1.0, 100.0)), raw
 
 
 def rule_flags(layers):
@@ -135,7 +136,7 @@ def measure_one(arm, subject, trained):
            "beta": BETA, "batch": BATCH, "layers": layers["layers"], "phase_ok": layers["phase_ok"],
            "tied_norm": layers["tied_norm"]}
     if "src" in rec["layers"] and "out" in rec["layers"]:
-        rec["scale"] = rate_scale(rec["layers"])
+        rec["scale"], rec["scale_raw"] = rate_scale(rec["layers"])
         rec["rule"] = rule_flags(rec["layers"])
     return rec
 
