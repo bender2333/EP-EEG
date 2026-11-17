@@ -1,0 +1,1 @@
+{"stage": "M16", "block": "spatial_features", "subject": 4, "seed": 0, "split": "val", "exploratory": false, "lda_acc": 0.5104166666666666, "lda_kappa": 0.3472222222222222, "ep_acc": 0.5, "ep_kappa": 0.33333333333333337, "ep_train_acc": 1.0}
