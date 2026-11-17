@@ -1,0 +1,1 @@
+{"stage": "M17", "block": "cspnet", "kind": "pools", "subject": 1, "seed": 0, "U": 600, "split": "val", "updates": 600, "refused": 0, "train_acc": 0.796875, "train_kappa": 0.7291666666666667, "train_settle_rate": 1.0, "settle_rate": 1.0, "rejected_trials": 0, "acc": 0.6041666666666666, "kappa": 0.4722222222222222, "n": 96, "gscale": 1.0, "wall_s": 4.6294755935668945}

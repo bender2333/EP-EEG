@@ -1,0 +1,1 @@
+{"stage": "M17", "block": "front_rate", "subject": 3, "seed": 0, "U": 500, "scale": 100.0, "split": "val", "test": {"kappa": 0.23611111111111116, "acc": 0.4270833333333333, "n": 96, "settle_rate": 1.0, "coverage_8of11": 1.0, "rejected_trials": 0, "rejected_subwindows": 0}, "front_rel": 0.10879706151729795, "cos_car": 0.9943285800782589, "refused": 0, "certified_end": true}
