@@ -41,7 +41,7 @@ def main(argv=None):
     C.seal_or_stop()
     for kind in a.kinds:
         for s in a.subjects:
-            out = C.OUT / "screen" / f"{kind}_A{s:02d}_s{a.seed}.json"
+            out = C.OUT / "screen" / f"{kind}_U{a.U}_A{s:02d}_s{a.seed}.json"
             if out.exists():
                 print("exists", out.name, flush=True)
                 continue
