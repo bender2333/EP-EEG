@@ -93,7 +93,7 @@ def measure_graph(g, X, y):
     w = np.asarray(lr.brain.weights, float)
     slope_m = np.mean(slope, 0)
     gains = {}
-    for a, b in ((0, 1), (1, 2), (2, 3), (3, 4), (4, 3), (3, 2), (2, 1)):
+    for a, b in ((0, 1), (1, 2), (2, 3), (3, 4), (4, 3), (3, 2), (2, 1), (2, 4), (4, 2)):
         if a >= len(NAMES) or b >= len(NAMES):
             continue
         key = f"{NAMES[a]}->{NAMES[b]}"
@@ -139,10 +139,13 @@ def measure_graph(g, X, y):
     ratio = None
     if rel.get("src") and rel.get("out"):
         ratio = rel["out"] / rel["src"]
-    back = [gains.get("outlet->column"), gains.get("column->pool"), gains.get("pool->front")]
-    product = None
-    if all(v is not None and v > 0 for v in back):
-        product = float(np.prod(back))
+    if gains.get("outlet->column") and gains.get("column->pool") and gains.get("pool->front"):
+        back = [gains["outlet->column"], gains["column->pool"], gains["pool->front"]]
+    elif gains.get("outlet->pool") and gains.get("pool->front"):
+        back = [gains["outlet->pool"], gains["pool->front"]]
+    else:
+        back = []
+    product = float(np.prod(back)) if back else None
     return {
         "phase_ok": {"free": float(np.mean(free.converged)), "nudged": float(np.mean(nudged.converged)),
                      "opposite": float(np.mean(opposite.converged))},
